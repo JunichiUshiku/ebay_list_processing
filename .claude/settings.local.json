@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__google-sheets__get_sheet_data",
+      "mcp__google-sheets__update_cells"
+    ]
+  }
+}

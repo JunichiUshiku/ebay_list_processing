@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "google-sheets": {
+      "command": "npx",
+      "args": ["-y", "mcp-google-sheets"],
+      "env": {
+        "GOOGLE_APPLICATION_CREDENTIALS": "./credentials/google-sheets-sa.json"
+      }
+    }
+  }
+}

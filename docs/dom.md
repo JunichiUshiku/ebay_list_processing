@@ -1,0 +1,1 @@
+body > div.sh-core-layout > div.sh-core-layout__body > div.sh-core-layout__center > section > div.research-container

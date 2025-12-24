@@ -1,0 +1,9 @@
+# 認証情報
+credentials/
+
+# 再生成可能
+node_modules/
+
+# OS固有
+.DS_Store
+Thumbs.db
