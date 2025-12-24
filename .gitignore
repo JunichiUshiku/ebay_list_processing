@@ -1,6 +1,9 @@
 # 認証情報
 credentials/
 
+# OS別設定（テンプレートからコピーして使用）
+.claude/settings.json
+
 # 再生成可能
 node_modules/
 
