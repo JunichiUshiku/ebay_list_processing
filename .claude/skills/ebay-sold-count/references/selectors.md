@@ -54,3 +54,10 @@ document.querySelector('button.search-input-panel__research-button').click();
 const cells = document.querySelectorAll('.research-table-row__totalSoldCount'); Array.from(cells).reduce((sum, cell) => sum + (parseInt(cell.innerText) || 0), 0);
 ```
 ※ 戻り値: Total Sold の合計数値
+
+### 現在の検索結果URL取得
+
+```
+window.location.href
+```
+※ 戻り値: 検索結果ページのURL（スプレッドシートへのリンク挿入に使用）
