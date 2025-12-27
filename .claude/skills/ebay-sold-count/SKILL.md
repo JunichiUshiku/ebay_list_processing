@@ -8,12 +8,21 @@ description: eBay販売履歴件数調査ワークフロー（並列処理版）
 ## 🚨 CRITICAL RULES (MUST PRESERVE AFTER COMPACTION)
 
 **REQUIRED**: Read `references/selectors.md` FIRST before any processing
+**REQUIRED**: Use URL generation function from selectors.md (NO manual URL construction)
+**REQUIRED**: Validate URL before navigation (ERROR = regenerate, never proceed)
 **METHOD**: URL直接ナビゲート（UI操作不要）
 **PARALLEL**: 5タブ同時処理
 
 **必須**: 処理開始前に `references/selectors.md` を必ず読み込む
+**必須**: URL生成は selectors.md の関数を実行（手動構築禁止）
+**必須**: ナビゲート前にURL検証実行（ERROR時は再生成、続行禁止）
 **方式**: URLパラメータでキーワード・期間を指定して直接ナビゲート
 **並列**: 5タブで同時にページロード、順次結果取得
+
+**🔴 絶対禁止事項**:
+- タイムスタンプ（endDate, startDate）をハードコードすること
+- URL生成関数を「参考情報」として独自実装すること
+- URL検証をスキップしてナビゲートすること
 
 ---
 
@@ -179,18 +188,34 @@ mcp__claude-in-chrome__tabs_create_mcp × 5回
 
 **TodoWrite更新**: `並列処理で販売数調査` → `in_progress`
 
-#### 7-1: URL生成（5件分）
+#### 7-1: URL生成（5件分）【変更禁止】
 
-処理対象から5件を取得し、各キーワードに対してURLを生成:
+**⚠️ 以下の手順を正確に実行すること。手動でURLを構築しないこと。**
 
-```javascript
-// selectors.md のテンプレートを使用（startDate/endDate必須）
-const endDate = Date.now();
-const startDate90 = endDate - (90 * 24 * 60 * 60 * 1000);
-const url = `https://www.ebay.com/sh/research?marketplace=EBAY-US&keywords=${encodeURIComponent(keyword)}&dayRange=90&endDate=${endDate}&startDate=${startDate90}&categoryId=0&offset=0&limit=50&tabName=SOLD&tz=Asia%2FTokyo`;
+処理対象から5件を取得し、各キーワードに対して**selectors.mdの関数を実行**してURLを生成:
+
+```
+mcp__claude-in-chrome__javascript_tool
+text: (function(keyword) { const now = Date.now(); const start = now - (90 * 24 * 60 * 60 * 1000); return 'https://www.ebay.com/sh/research?marketplace=EBAY-US&keywords=' + encodeURIComponent(keyword) + '&dayRange=90&startDate=' + start + '&endDate=' + now + '&categoryId=0&offset=0&limit=50&tabName=SOLD&tz=Asia%2FTokyo'; })('キーワード')
 ```
 
-**重要**: `startDate`と`endDate`がないと期間計算が不正確になる。
+**🔴 絶対禁止事項**:
+- この関数の戻り値を使用せずに手動でURLを構築すること
+- タイムスタンプ（endDate, startDate）をハードコードすること
+- 関数を「参考情報」として独自実装すること
+
+#### 7-1.5: URL検証（必須）
+
+**ナビゲート前に必ず実行すること。検証失敗のままナビゲート禁止。**
+
+```
+mcp__claude-in-chrome__javascript_tool
+text: (function(url) { try { const params = new URLSearchParams(new URL(url).search); const endDate = parseInt(params.get('endDate')); const now = Date.now(); const diff = Math.abs(now - endDate); if (!endDate) return 'ERROR: endDateパラメータなし'; if (diff > 3600000) return 'ERROR: タイムスタンプが' + Math.round(diff/1000) + '秒古い'; return 'OK: 検証成功'; } catch(e) { return 'ERROR: ' + e.message; } })('{生成されたURL}')
+```
+
+**検証結果の対応**:
+- `OK:` → 7-2へ進む
+- `ERROR:` → 7-1に戻りURL再生成（検証失敗のままナビゲート禁止）
 
 #### 7-2: 各タブに並列ナビゲート
 
@@ -259,12 +284,15 @@ text: window.location.href
 
 **条件**: 90日間のTotal Soldが**2未満**の場合のみ実行
 
-該当するタブのみ、6ヶ月間URLに再ナビゲート:
-```javascript
-const endDate = Date.now();
-const startDate180 = endDate - (180 * 24 * 60 * 60 * 1000);
-const url = `https://www.ebay.com/sh/research?marketplace=EBAY-US&keywords=${encodeURIComponent(keyword)}&dayRange=180&endDate=${endDate}&startDate=${startDate180}&categoryId=0&offset=0&limit=50&tabName=SOLD&tz=Asia%2FTokyo`;
+該当するタブのみ、6ヶ月間URLを生成して再ナビゲート:
+
+**【変更禁止】selectors.mdの関数を実行してURLを生成**:
 ```
+mcp__claude-in-chrome__javascript_tool
+text: (function(keyword) { const now = Date.now(); const start = now - (180 * 24 * 60 * 60 * 1000); return 'https://www.ebay.com/sh/research?marketplace=EBAY-US&keywords=' + encodeURIComponent(keyword) + '&dayRange=180&startDate=' + start + '&endDate=' + now + '&categoryId=0&offset=0&limit=50&tabName=SOLD&tz=Asia%2FTokyo'; })('キーワード')
+```
+
+**URL検証後にナビゲート**（7-1.5と同じ検証関数を実行）
 
 再度ロード待機 → 結果取得
 

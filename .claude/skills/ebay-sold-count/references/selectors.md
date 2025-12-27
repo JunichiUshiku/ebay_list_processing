@@ -1,81 +1,49 @@
 # eBay Product Research セレクター
 
-## 🚀 URL直接ナビゲート（並列処理用）
+## URL生成関数（変更禁止）
 
-### URL生成テンプレート
+**⚠️ この関数を正確に実行すること。手動でURLを構築しないこと。**
 
-```javascript
-// タイムスタンプ計算（ミリ秒）- 必ずDate.now()で現在時刻を取得すること
-const endDate = Date.now();  // 例: 1766771545620 (2025年12月27日)
-const startDate90 = endDate - (90 * 24 * 60 * 60 * 1000);   // 90日前
-const startDate180 = endDate - (180 * 24 * 60 * 60 * 1000); // 180日前
+### 90日間URL生成
 
-// 90日間検索URL（startDate/endDate必須）
-const url90 = `https://www.ebay.com/sh/research?marketplace=EBAY-US&keywords=${encodeURIComponent(keyword)}&dayRange=90&endDate=${endDate}&startDate=${startDate90}&categoryId=0&offset=0&limit=50&tabName=SOLD&tz=Asia%2FTokyo`;
+javascript_toolで以下を実行（`KEYWORD`を置換）:
 
-// 6ヶ月間検索URL（startDate/endDate必須）
-const url180 = `https://www.ebay.com/sh/research?marketplace=EBAY-US&keywords=${encodeURIComponent(keyword)}&dayRange=180&endDate=${endDate}&startDate=${startDate180}&categoryId=0&offset=0&limit=50&tabName=SOLD&tz=Asia%2FTokyo`;
+```
+(function(keyword) { const now = Date.now(); const start = now - (90 * 24 * 60 * 60 * 1000); return 'https://www.ebay.com/sh/research?marketplace=EBAY-US&keywords=' + encodeURIComponent(keyword) + '&dayRange=90&startDate=' + start + '&endDate=' + now + '&categoryId=0&offset=0&limit=50&tabName=SOLD&tz=Asia%2FTokyo'; })('KEYWORD')
 ```
 
-**⚠️ 重要**:
-- `endDate`は必ず`Date.now()`で現在時刻を動的に取得すること
-- ハードコードされたタイムスタンプは使用禁止（過去のデータを参照してしまう）
-- `startDate`と`endDate`パラメータがないと期間計算が不正確になる
+### 6ヶ月間URL生成
 
-**使用方法**:
-- `keyword` を検索キーワードに置換
-- `encodeURIComponent` でURLエンコード済み
-- このURLに直接ナビゲートすることでUI操作を省略
+javascript_toolで以下を実行（`KEYWORD`を置換）:
+
+```
+(function(keyword) { const now = Date.now(); const start = now - (180 * 24 * 60 * 60 * 1000); return 'https://www.ebay.com/sh/research?marketplace=EBAY-US&keywords=' + encodeURIComponent(keyword) + '&dayRange=180&startDate=' + start + '&endDate=' + now + '&categoryId=0&offset=0&limit=50&tabName=SOLD&tz=Asia%2FTokyo'; })('KEYWORD')
+```
+
+**🔴 絶対禁止事項**:
+- 上記関数の戻り値を使用せずに手動でURLを構築すること
+- タイムスタンプをハードコードすること
+- 関数を「参考情報」として独自実装すること
 
 ---
 
-## 固定セレクター一覧
+## URL検証関数（必須）
 
-| 要素 | セレクター |
-|------|-----------|
-| キーワード入力 | `input.textbox__control` |
-| 期間プルダウン | `button.menu-button__button` |
-| Researchボタン | `button.search-input-panel__research-button` |
-| メニューアイテム | `.menu-button__item` |
-| Total Soldセル | `.research-table-row__totalSoldCount` |
+**ナビゲート前に必ず実行すること**
+
+javascript_toolで以下を実行（`URL`を生成されたURLに置換）:
+
+```
+(function(url) { try { const params = new URLSearchParams(new URL(url).search); const endDate = parseInt(params.get('endDate')); const now = Date.now(); const diff = Math.abs(now - endDate); if (!endDate) return 'ERROR: endDateパラメータなし'; if (diff > 3600000) return 'ERROR: タイムスタンプが' + Math.round(diff/1000) + '秒古い'; return 'OK: 検証成功 endDate=' + endDate; } catch(e) { return 'ERROR: ' + e.message; } })('URL')
+```
+
+**検証結果の対応**:
+- `OK:` → ナビゲート実行可
+- `ERROR:` → URL生成からやり直すこと（検証失敗のままナビゲート禁止）
 
 ---
 
-## JavaScript コードスニペット
-
-**重要**: javascript_toolで実行する際は、1行に結合するか、セミコロンで区切ること。
-
-### キーワード入力
-
-```
-const input = document.querySelector('input.textbox__control'); input.value = 'KEYWORD'; input.dispatchEvent(new Event('input', { bubbles: true }));
-```
-※ `KEYWORD` を実際のキーワードに置換
-
-### 期間プルダウン展開
-
-```
-const buttons = document.querySelectorAll('button.menu-button__button'); const periodBtn = Array.from(buttons).find(btn => btn.textContent.includes('days') || btn.textContent.includes('months') || btn.textContent.includes('year')); if (periodBtn) periodBtn.click();
-```
-※ 複数ボタンがあるためテキストでフィルタリング必須
-
-### 期間選択（90日間）
-
-```
-const items = document.querySelectorAll('.menu-button__item'); const target = Array.from(items).find(el => el.textContent.trim() === 'Last 90 days'); if (target) target.click();
-```
-
-### 期間選択（6ヶ月間）
-
-```
-const items = document.querySelectorAll('.menu-button__item'); const target = Array.from(items).find(el => el.textContent.trim() === 'Last 6 months'); if (target) target.click();
-```
-
-### Researchボタンクリック
-
-```
-document.querySelector('button.search-input-panel__research-button').click();
-```
+## 結果取得
 
 ### Total Sold合計取得
 
@@ -141,3 +109,27 @@ window.location.href.includes('/signin') || document.body.innerText.includes('Si
 !!document.querySelector('.research-table__no-results')
 ```
 ※ 戻り値: true = 検索結果0件（Total Sold = 0として記録）
+
+---
+
+## 🔴 エラー発生時の対応（必須手順）
+
+**この表に従って対応すること。独自判断での続行禁止。**
+
+| エラー種別 | 検出方法 | 対応 | 続行可否 |
+|-----------|---------|------|---------|
+| CAPTCHA検出 | `iframe[title*="reCAPTCHA"]` | 処理中断、ユーザーに手動解除を依頼 | ❌ 不可 |
+| ログイン切れ | `window.location.href.includes('/signin')` | 処理中断、ユーザーに再ログインを依頼 | ❌ 不可 |
+| URL検証失敗 | 検証関数が`ERROR:`を返す | URL生成からやり直し | ❌ 不可（再生成後は可） |
+| DOM未検出 | querySelector失敗 | 3秒待機後リトライ（最大3回） | △ 条件付き |
+| タイムアウト | 10秒経過 | 5秒待機後リトライ（最大2回） | △ 条件付き |
+| 検索結果なし | `.research-table__no-results` | 正常終了、0として記録 | ✅ 可 |
+
+### リトライ間隔
+
+| 回数 | 間隔 |
+|------|------|
+| 1回目 | 2秒 |
+| 2回目 | 5秒 |
+| 3回目 | 10秒 |
+| 失敗 | 「取得エラー」記録、次へ |
