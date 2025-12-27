@@ -201,6 +201,7 @@ mcp__claude-in-chrome__tabs_create_mcp × 5回
 
 ```
 mcp__claude-in-chrome__javascript_tool
+action: javascript_exec
 text: (function(keyword) { const now = Date.now(); const start = now - (90 * 24 * 60 * 60 * 1000); return 'https://www.ebay.com/sh/research?marketplace=EBAY-US&keywords=' + encodeURIComponent(keyword) + '&dayRange=90&startDate=' + start + '&endDate=' + now + '&categoryId=0&offset=0&limit=50&tabName=SOLD&tz=Asia%2FTokyo'; })('キーワード')
 ```
 
@@ -219,6 +220,7 @@ text: (function(keyword) { const now = Date.now(); const start = now - (90 * 24 
 
 ```
 mcp__claude-in-chrome__javascript_tool
+action: javascript_exec
 text: (function(url) { try { const params = new URLSearchParams(new URL(url).search); const endDate = parseInt(params.get('endDate')); const now = Date.now(); const diff = Math.abs(now - endDate); if (!endDate) return 'ERROR: endDateパラメータなし'; if (diff > 3600000) return 'ERROR: タイムスタンプが' + Math.round(diff/1000) + '秒古い'; return 'OK: 検証成功'; } catch(e) { return 'ERROR: ' + e.message; } })('{生成されたURL}')
 ```
 
@@ -256,6 +258,7 @@ duration: 3
 その後、ロード完了を確認:
 ```
 mcp__claude-in-chrome__javascript_tool
+action: javascript_exec
 tabId: {タブID}
 text: !!document.querySelector('.research-table-row__totalSoldCount') || !!document.querySelector('.research-table__no-results')
 ```
@@ -278,6 +281,7 @@ document.body.innerText.includes('Sign in') || document.body.innerText.includes(
 
 ```
 mcp__claude-in-chrome__javascript_tool
+action: javascript_exec
 tabId: {タブID}
 text: const cells = document.querySelectorAll('.research-table-row__totalSoldCount'); Array.from(cells).reduce((sum, cell) => sum + (parseInt(cell.innerText) || 0), 0);
 ```
@@ -294,6 +298,7 @@ text: const cells = document.querySelectorAll('.research-table-row__totalSoldCou
 **【変更禁止】selectors.mdの関数を実行してURLを生成**:
 ```
 mcp__claude-in-chrome__javascript_tool
+action: javascript_exec
 text: (function(keyword) { const now = Date.now(); const start = now - (180 * 24 * 60 * 60 * 1000); return 'https://www.ebay.com/sh/research?marketplace=EBAY-US&keywords=' + encodeURIComponent(keyword) + '&dayRange=180&startDate=' + start + '&endDate=' + now + '&categoryId=0&offset=0&limit=50&tabName=SOLD&tz=Asia%2FTokyo'; })('キーワード')
 ```
 
