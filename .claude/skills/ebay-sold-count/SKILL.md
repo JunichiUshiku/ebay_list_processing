@@ -69,12 +69,12 @@ Read: .claude/skills/ebay-sold-count/references/selectors.md
 5. 5タブを作成
 
 [並列処理ループ]（5件単位）
-6. 5つのURLを生成（キーワード+90日間）
+6. 5つのURLを生成（キーワード+90日間）→ URL保持
 7. 各タブに並列ナビゲート
 8. 全タブのロード完了を待機
-9. 各タブから結果取得（Total Sold + URL）
-10. 90日間が2未満の場合 → 6ヶ月URLに再ナビゲート
-11. 5件分をバッチ書き込み
+9. 各タブからTotal Sold取得（URLは6で保持済み）
+10. 90日間が2未満の場合 → 6ヶ月URLを生成・保持・再ナビゲート
+11. 5件分をバッチ書き込み（保持したURLでHYPERLINK作成）
 12. 次の5件へ
 
 [完了]
@@ -94,6 +94,7 @@ TodoWriteツールで以下のタスクを登録し、進捗を可視化:
 ```
 TodoWrite:
 - 参照ファイル（selectors.md）を読み込む (pending) ← 最初に実行
+- X1/Y1ヘッダー確認・記載 (pending)
 - スプレッドシートからデータ取得 (pending)
 - 処理対象行の特定 (pending)
 - 5タブを作成 (pending)
@@ -120,6 +121,8 @@ Read: .claude/skills/ebay-sold-count/references/selectors.md
 
 ### Step 3: X列・Y列ヘッダー確認
 
+**TodoWrite更新**: `X1/Y1ヘッダー確認・記載` → `in_progress`
+
 1. X1・Y1セルを取得:
 ```
 mcp__google-sheets__get_sheet_data
@@ -134,6 +137,8 @@ mcp__google-sheets__update_cells
 range: X1:Y1
 data: [["販売数（90日間）", "販売数（6ヶ月間）"]]
 ```
+
+**TodoWrite更新**: `X1/Y1ヘッダー確認・記載` → `completed`
 
 ### Step 4: 必要な列のみデータ取得
 
@@ -199,6 +204,10 @@ mcp__claude-in-chrome__javascript_tool
 text: (function(keyword) { const now = Date.now(); const start = now - (90 * 24 * 60 * 60 * 1000); return 'https://www.ebay.com/sh/research?marketplace=EBAY-US&keywords=' + encodeURIComponent(keyword) + '&dayRange=90&startDate=' + start + '&endDate=' + now + '&categoryId=0&offset=0&limit=50&tabName=SOLD&tz=Asia%2FTokyo'; })('キーワード')
 ```
 
+**🔴 重要: 生成されたURLを保持すること**
+- この関数の戻り値（URL）を変数 `generatedUrl90` として保持
+- Step 8のHYPERLINK作成時に再利用（MCPセキュリティ制限により `window.location.href` は使用不可）
+
 **🔴 絶対禁止事項**:
 - この関数の戻り値を使用せずに手動でURLを構築すること
 - タイムスタンプ（endDate, startDate）をハードコードすること
@@ -256,8 +265,8 @@ text: !!document.querySelector('.research-table-row__totalSoldCount') || !!docum
 // CAPTCHA検出
 !!document.querySelector('iframe[title*="reCAPTCHA"]') || !!document.querySelector('.g-recaptcha')
 
-// ログイン切れ検出
-window.location.href.includes('/signin')
+// ログイン切れ検出（MCPセキュリティ制限によりinnerTextで検出）
+document.body.innerText.includes('Sign in') || document.body.innerText.includes('Hello! Sign in')
 ```
 
 **CAPTCHA検出時**: 処理中断、ユーザーに手動解除を依頼
@@ -265,7 +274,7 @@ window.location.href.includes('/signin')
 
 #### 7-4: 結果取得（順次）
 
-各タブから結果を取得:
+各タブからTotal Soldのみ取得（URLは7-1で保持済み）:
 
 ```
 mcp__claude-in-chrome__javascript_tool
@@ -273,12 +282,8 @@ tabId: {タブID}
 text: const cells = document.querySelectorAll('.research-table-row__totalSoldCount'); Array.from(cells).reduce((sum, cell) => sum + (parseInt(cell.innerText) || 0), 0);
 ```
 
-同時にURLも取得:
-```
-mcp__claude-in-chrome__javascript_tool
-tabId: {タブID}
-text: window.location.href
-```
+**⚠️ MCPセキュリティ制限**: `window.location.href` はブロックされるため使用不可
+→ 7-1で生成・保持した `generatedUrl90` をHYPERLINK用に使用
 
 #### 7-5: 6ヶ月間追加検索（条件付き）
 
@@ -292,9 +297,11 @@ mcp__claude-in-chrome__javascript_tool
 text: (function(keyword) { const now = Date.now(); const start = now - (180 * 24 * 60 * 60 * 1000); return 'https://www.ebay.com/sh/research?marketplace=EBAY-US&keywords=' + encodeURIComponent(keyword) + '&dayRange=180&startDate=' + start + '&endDate=' + now + '&categoryId=0&offset=0&limit=50&tabName=SOLD&tz=Asia%2FTokyo'; })('キーワード')
 ```
 
+**🔴 重要: 生成されたURLを `generatedUrl180` として保持**（Y列HYPERLINK用）
+
 **URL検証後にナビゲート**（7-1.5と同じ検証関数を実行）
 
-再度ロード待機 → 結果取得
+再度ロード待機 → 結果取得（Total Soldのみ、URLは保持済み）
 
 **条件分岐まとめ**:
 | 90日間の結果 | 6ヶ月検索 | X列 | Y列 |
@@ -312,15 +319,17 @@ text: (function(keyword) { const now = Date.now(); const start = now - (180 * 24
 
 販売数に検索結果URLへのリンクを埋め込む:
 
+**⚠️ URLは7-1/7-5で生成・保持した値を使用**（`window.location.href` はMCPセキュリティ制限でブロック）
+
 ```
 mcp__google-sheets__batch_update_cells
 spreadsheet_id: 1pmbzGCHCqd0EiyuJBl6rfUEGXVITcBDMGPg9bQ67d-g
 sheet: AI作業用
 ranges: {
-  "X{行番号1}": [['=HYPERLINK("{90日間検索URL1}", "{販売数1}")']],
-  "X{行番号2}": [['=HYPERLINK("{90日間検索URL2}", "{販売数2}")']],
+  "X{行番号1}": [['=HYPERLINK("{generatedUrl90_1}", "{販売数1}")']],
+  "X{行番号2}": [['=HYPERLINK("{generatedUrl90_2}", "{販売数2}")']],
   ...
-  "Y{行番号}": [['=HYPERLINK("{6ヶ月間検索URL}", "{販売数}")']]  // 条件該当時のみ
+  "Y{行番号}": [['=HYPERLINK("{generatedUrl180}", "{販売数}")']]  // 条件該当時のみ
 }
 ```
 

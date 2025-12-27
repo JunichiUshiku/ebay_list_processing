@@ -52,12 +52,19 @@ const cells = document.querySelectorAll('.research-table-row__totalSoldCount'); 
 ```
 ※ 戻り値: Total Sold の合計数値
 
-### 現在の検索結果URL取得
+### HYPERLINK用URL
+
+**⚠️ MCPセキュリティ制限により `window.location.href` は使用不可**
+
+URL生成関数で取得したURLを保持し、HYPERLINK作成時に再利用すること:
 
 ```
-window.location.href
+処理フロー:
+1. URL生成関数実行 → 戻り値を generatedUrl として保持
+2. ナビゲート実行
+3. Total Sold取得（数値のみ）
+4. HYPERLINK作成: =HYPERLINK("${generatedUrl}", ${totalSold})
 ```
-※ 戻り値: 検索結果ページのURL（スプレッドシートへのリンク挿入に使用）
 
 ---
 
@@ -99,9 +106,10 @@ await waitForResults();
 ### ログイン切れ検出
 
 ```
-window.location.href.includes('/signin') || document.body.innerText.includes('Sign in')
+document.body.innerText.includes('Sign in') || document.body.innerText.includes('Hello! Sign in')
 ```
 ※ 戻り値: true = ログイン画面にリダイレクト（処理中断が必要）
+※ MCPセキュリティ制限により `window.location.href` は使用不可
 
 ### 検索結果なし検出
 
@@ -119,7 +127,7 @@ window.location.href.includes('/signin') || document.body.innerText.includes('Si
 | エラー種別 | 検出方法 | 対応 | 続行可否 |
 |-----------|---------|------|---------|
 | CAPTCHA検出 | `iframe[title*="reCAPTCHA"]` | 処理中断、ユーザーに手動解除を依頼 | ❌ 不可 |
-| ログイン切れ | `window.location.href.includes('/signin')` | 処理中断、ユーザーに再ログインを依頼 | ❌ 不可 |
+| ログイン切れ | `innerText.includes('Sign in')` | 処理中断、ユーザーに再ログインを依頼 | ❌ 不可 |
 | URL検証失敗 | 検証関数が`ERROR:`を返す | URL生成からやり直し | ❌ 不可（再生成後は可） |
 | DOM未検出 | querySelector失敗 | 3秒待機後リトライ（最大3回） | △ 条件付き |
 | タイムアウト | 10秒経過 | 5秒待機後リトライ（最大2回） | △ 条件付き |
