@@ -1,395 +1,82 @@
 ---
 name: ebay-sold-count
-description: eBay販売履歴件数調査ワークフロー（並列処理版）。スプレッドシートのE列eBay検索URLからキーワードを抽出し、eBay Seller Hub Product Researchで90日間の販売件数（Total Sold合計）を調べてX列に記録する。90日間の販売件数が2未満の場合は6ヶ月間で再検索しY列に記録。5タブ並列処理により従来比70%の時間短縮を実現。「販売件数を調べて」「sold count」「90日間の販売数」「リサーチ」で全件処理。アイテムナンバーを指定した場合（例:「403498476787の販売数を調べて」）はC列から該当行を検索して処理。
+description: eBay販売履歴件数調査ワークフロー（並列処理版）。スプレッドシートのE列eBay検索URLからキーワードを抽出し、eBay Seller Hub Product Researchで90日間の販売件数を調べてX列に記録。「販売件数を調べて」「sold count」「リサーチ」で全件処理。アイテムナンバー指定時はC列から検索。
 ---
 
-# eBay販売件数調査処理（並列処理版）
+# eBay販売件数調査（並列処理版）
 
-## 🚨 CRITICAL RULES (MUST PRESERVE AFTER COMPACTION)
+## CRITICAL RULES
 
-**REQUIRED**: Read `references/selectors.md` FIRST before any processing
-**REQUIRED**: Use URL generation function from selectors.md (NO manual URL construction)
-**REQUIRED**: Validate URL before navigation (ERROR = regenerate, never proceed)
-**METHOD**: URL直接ナビゲート（UI操作不要）
-**PARALLEL**: 5タブ同時処理
-
-**必須**: 処理開始前に `references/selectors.md` を必ず読み込む
-**必須**: URL生成は selectors.md の関数を実行（手動構築禁止）
-**必須**: ナビゲート前にURL検証実行（ERROR時は再生成、続行禁止）
-**方式**: URLパラメータでキーワード・期間を指定して直接ナビゲート
-**並列**: 5タブで同時にページロード、順次結果取得
-
-**🔴 絶対禁止事項**:
-- タイムスタンプ（endDate, startDate）をハードコードすること
-- URL生成関数を「参考情報」として独自実装すること
-- URL検証をスキップしてナビゲートすること
+1. **参照ファイル必読**: 処理前に `references/selectors.md` を読み込む
+2. **タブ作成後ナビゲート必須**: 新規タブは `chrome://newtab/` でJS実行不可 → eBayへ先にナビゲート
+3. **タイムスタンプ動的取得**: JSで数値のみ取得、URLはClaude側で構築（URL文字列はMCPでブロック）
+4. **URL保持必須**: 生成したURLを保持しHYPERLINK作成に再利用（`window.location.href`は使用不可）
+5. **LINE通知必須**: 処理完了後に必ずLINE通知を送信
 
 ---
 
-## 🔴 必須参照ファイル（最初に読み込むこと）
+## ワークフロー
 
-**以下のファイルをReadツールで読み込んでから処理を開始すること。**
+TodoWriteで以下を登録し進捗追跡:
 
-| ファイル | パス | 内容 |
-|----------|------|------|
-| セレクター | `.claude/skills/ebay-sold-count/references/selectors.md` | URL生成、DOM要素セレクター、エラー検出コード |
+- [ ] 参照ファイル読み込み（selectors.md）
+- [ ] データ取得・処理対象特定
+- [ ] 5タブ作成 + eBayナビゲート
+- [ ] 並列処理で販売数調査
+- [ ] 結果をスプレッドシートに記録
+- [ ] LINE通知送信
+- [ ] サマリー報告
 
-```
-Read: .claude/skills/ebay-sold-count/references/selectors.md
-```
-
-**⚠️ このファイルを読み込まずに処理を開始することは禁止。**
+**詳細手順**: [references/workflow-detail.md](references/workflow-detail.md)
 
 ---
 
 ## スプレッドシート定義
 
-**Spreadsheet ID**: `1pmbzGCHCqd0EiyuJBl6rfUEGXVITcBDMGPg9bQ67d-g`
-**Sheet名**: `AI作業用`
+| 項目 | 値 |
+|------|-----|
+| ID | `1pmbzGCHCqd0EiyuJBl6rfUEGXVITcBDMGPg9bQ67d-g` |
+| シート | `AI作業用` |
 
 | 列 | 内容 | 備考 |
 |----|------|------|
-| C | eBay Item Number | アイテムナンバー指定時の検索対象 |
-| E | eBay検索URL | `_nkw=`パラメータからキーワード抽出 |
-| X | 販売数（90日間） | 処理結果を記録（値あり→スキップ） |
-| Y | 販売数（6ヶ月間） | X列が2未満の場合のみ記録 |
-
-ヘッダー: 1行目、データ: 2行目から
+| C | eBay Item Number | アイテム指定時の検索対象 |
+| E | eBay検索URL | `_nkw=`からキーワード抽出 |
+| X | 販売数（90日間） | 値あり→スキップ |
+| Y | 販売数（6ヶ月間） | X列が2未満の場合のみ |
 
 ---
 
-## 🚀 並列処理ワークフロー概要
+## 処理フロー概要
 
 ```
 [初期化]
-1. TodoWriteでタスク登録
-2. 参照ファイル読み込み
-3. スプレッドシートからデータ取得
-4. 処理対象行を特定
-5. 5タブを作成
+1. TodoWrite登録 → 参照ファイル読み込み → データ取得
+2. 5タブ作成 → 各タブをeBayへナビゲート
 
 [並列処理ループ]（5件単位）
-6. 5つのURLを生成（キーワード+90日間）→ URL保持
-7. 各タブに並列ナビゲート
-8. 全タブのロード完了を待機
-9. 各タブからTotal Sold取得（URLは6で保持済み）
-10. 90日間が2未満の場合 → 6ヶ月URLを生成・保持・再ナビゲート
-11. 5件分をバッチ書き込み（保持したURLでHYPERLINK作成）
-12. 次の5件へ
+3. タイムスタンプ取得（JS: 数値のみ）
+4. Claude側でURL構築 → 保持
+5. 5タブに並列ナビゲート
+6. Total Sold取得 → 90日<2なら6ヶ月再検索
+7. バッチ書き込み（保持URLでHYPERLINK）
 
 [完了]
-13. サマリー報告
+8. LINE通知送信 → サマリー報告
 ```
-
----
-
-## ワークフロー詳細
-
-### Step 1: TodoWriteでタスク登録（必須・最初に実行）
-
-**⚠️ このステップを最初に実行すること。スキップ禁止。**
-
-TodoWriteツールで以下のタスクを登録し、進捗を可視化:
-
-```
-TodoWrite:
-- 参照ファイル（selectors.md）を読み込む (pending) ← 最初に実行
-- X1/Y1ヘッダー確認・記載 (pending)
-- スプレッドシートからデータ取得 (pending)
-- 処理対象行の特定 (pending)
-- 5タブを作成 (pending)
-- 並列処理で販売数調査 (pending)
-- 結果をスプレッドシートに記録 (pending)
-- サマリー報告を出力 (pending)
-```
-
-### Step 2: 参照ファイル読み込み（必須）
-
-**TodoWrite更新**: `参照ファイル（selectors.md）を読み込む` → `in_progress`
-
-```
-Read: .claude/skills/ebay-sold-count/references/selectors.md
-```
-
-このファイルには以下が記載されている:
-- URL生成テンプレート
-- DOM要素のセレクター一覧
-- ロード完了検出コード
-- CAPTCHA・ログイン切れ検出コード
-
-**TodoWrite更新**: `参照ファイル（selectors.md）を読み込む` → `completed`
-
-### Step 3: X列・Y列ヘッダー確認
-
-**TodoWrite更新**: `X1/Y1ヘッダー確認・記載` → `in_progress`
-
-1. X1・Y1セルを取得:
-```
-mcp__google-sheets__get_sheet_data
-spreadsheet_id: 1pmbzGCHCqd0EiyuJBl6rfUEGXVITcBDMGPg9bQ67d-g
-sheet: AI作業用
-range: X1:Y1
-```
-
-2. ヘッダーが空の場合 → 書き込み:
-```
-mcp__google-sheets__update_cells
-range: X1:Y1
-data: [["販売数（90日間）", "販売数（6ヶ月間）"]]
-```
-
-**TodoWrite更新**: `X1/Y1ヘッダー確認・記載` → `completed`
-
-### Step 4: 必要な列のみデータ取得
-
-**TodoWrite更新**: `スプレッドシートからデータ取得` → `in_progress`
-
-4列を個別に取得（並列実行可）:
-- C列（アイテムナンバー）: `range: C:C`
-- E列（eBay URL）: `range: E:E`
-- X列（90日間販売件数）: `range: X:X`
-- Y列（6ヶ月間販売件数）: `range: Y:Y`
-
-**TodoWrite更新**: `スプレッドシートからデータ取得` → `completed`
-
-### Step 5: 処理対象の決定
-
-**TodoWrite更新**: `処理対象行の特定` → `in_progress`
-
-**アイテムナンバー指定あり**:
-- C列から検索し**行番号を特定**
-- 特定した行番号と同じ行のE列からURL取得
-- X列の値に関係なく処理
-
-**指定なし（全件処理）**:
-- X列が空 → 未処理、検索実行対象
-- X列に数値あり → 処理済み、スキップ
-
-**キーワード抽出**:
-E列URLから`_nkw=`パラメータを抽出:
-```
-入力: https://www.ebay.com/sch/i.html?_nkw=Crab+Plate&_sacat=0
-抽出: Crab Plate（+を空白に変換）
-```
-
-**エラーケース**: `_nkw=`が存在しない → X列に「URLエラー」記録
-
-**TodoWrite更新**: `処理対象行の特定` → `completed`
-
-### Step 6: 5タブを作成
-
-**TodoWrite更新**: `5タブを作成` → `in_progress`
-
-```
-mcp__claude-in-chrome__tabs_context_mcp（初回のみ）
-mcp__claude-in-chrome__tabs_create_mcp × 5回
-```
-
-5つのタブIDを保持しておく。
-
-**TodoWrite更新**: `5タブを作成` → `completed`
-
-### Step 7: 並列処理ループ（5件単位）
-
-**TodoWrite更新**: `並列処理で販売数調査` → `in_progress`
-
-#### 7-1: URL生成（5件分）【変更禁止】
-
-**⚠️ 以下の手順を正確に実行すること。手動でURLを構築しないこと。**
-
-処理対象から5件を取得し、各キーワードに対して**selectors.mdの関数を実行**してURLを生成:
-
-```
-mcp__claude-in-chrome__javascript_tool
-action: javascript_exec
-text: (function(keyword) { const now = Date.now(); const start = now - (90 * 24 * 60 * 60 * 1000); return 'https://www.ebay.com/sh/research?marketplace=EBAY-US&keywords=' + encodeURIComponent(keyword) + '&dayRange=90&startDate=' + start + '&endDate=' + now + '&categoryId=0&offset=0&limit=50&tabName=SOLD&tz=Asia%2FTokyo'; })('キーワード')
-```
-
-**🔴 重要: 生成されたURLを保持すること**
-- この関数の戻り値（URL）を変数 `generatedUrl90` として保持
-- Step 8のHYPERLINK作成時に再利用（MCPセキュリティ制限により `window.location.href` は使用不可）
-
-**🔴 絶対禁止事項**:
-- この関数の戻り値を使用せずに手動でURLを構築すること
-- タイムスタンプ（endDate, startDate）をハードコードすること
-- 関数を「参考情報」として独自実装すること
-
-#### 7-1.5: URL検証（必須）
-
-**ナビゲート前に必ず実行すること。検証失敗のままナビゲート禁止。**
-
-```
-mcp__claude-in-chrome__javascript_tool
-action: javascript_exec
-text: (function(url) { try { const params = new URLSearchParams(new URL(url).search); const endDate = parseInt(params.get('endDate')); const now = Date.now(); const diff = Math.abs(now - endDate); if (!endDate) return 'ERROR: endDateパラメータなし'; if (diff > 3600000) return 'ERROR: タイムスタンプが' + Math.round(diff/1000) + '秒古い'; return 'OK: 検証成功'; } catch(e) { return 'ERROR: ' + e.message; } })('{生成されたURL}')
-```
-
-**検証結果の対応**:
-- `OK:` → 7-2へ進む
-- `ERROR:` → 7-1に戻りURL再生成（検証失敗のままナビゲート禁止）
-
-#### 7-2: 各タブに並列ナビゲート
-
-**同一メッセージ内で5つのnavigate呼び出しを実行**:
-
-```
-mcp__claude-in-chrome__navigate
-tabId: {タブ1のID}
-url: {URL1}
-
-mcp__claude-in-chrome__navigate
-tabId: {タブ2のID}
-url: {URL2}
-
-... (5タブ分)
-```
-
-#### 7-3: ロード完了待機
-
-各タブでページロード完了を確認:
-
-```
-mcp__claude-in-chrome__computer
-tabId: {タブID}
-action: wait
-duration: 3
-```
-
-その後、ロード完了を確認:
-```
-mcp__claude-in-chrome__javascript_tool
-action: javascript_exec
-tabId: {タブID}
-text: !!document.querySelector('.research-table-row__totalSoldCount') || !!document.querySelector('.research-table__no-results')
-```
-
-**エラーチェック**（各タブで実行）:
-```javascript
-// CAPTCHA検出
-!!document.querySelector('iframe[title*="reCAPTCHA"]') || !!document.querySelector('.g-recaptcha')
-
-// ログイン切れ検出（MCPセキュリティ制限によりinnerTextで検出）
-document.body.innerText.includes('Sign in') || document.body.innerText.includes('Hello! Sign in')
-```
-
-**CAPTCHA検出時**: 処理中断、ユーザーに手動解除を依頼
-**ログイン切れ検出時**: 処理中断、ユーザーに再ログインを依頼
-
-#### 7-4: 結果取得（順次）
-
-各タブからTotal Soldのみ取得（URLは7-1で保持済み）:
-
-```
-mcp__claude-in-chrome__javascript_tool
-action: javascript_exec
-tabId: {タブID}
-text: const cells = document.querySelectorAll('.research-table-row__totalSoldCount'); Array.from(cells).reduce((sum, cell) => sum + (parseInt(cell.innerText) || 0), 0);
-```
-
-**⚠️ MCPセキュリティ制限**: `window.location.href` はブロックされるため使用不可
-→ 7-1で生成・保持した `generatedUrl90` をHYPERLINK用に使用
-
-#### 7-5: 6ヶ月間追加検索（条件付き）
-
-**条件**: 90日間のTotal Soldが**2未満**の場合のみ実行
-
-該当するタブのみ、6ヶ月間URLを生成して再ナビゲート:
-
-**【変更禁止】selectors.mdの関数を実行してURLを生成**:
-```
-mcp__claude-in-chrome__javascript_tool
-action: javascript_exec
-text: (function(keyword) { const now = Date.now(); const start = now - (180 * 24 * 60 * 60 * 1000); return 'https://www.ebay.com/sh/research?marketplace=EBAY-US&keywords=' + encodeURIComponent(keyword) + '&dayRange=180&startDate=' + start + '&endDate=' + now + '&categoryId=0&offset=0&limit=50&tabName=SOLD&tz=Asia%2FTokyo'; })('キーワード')
-```
-
-**🔴 重要: 生成されたURLを `generatedUrl180` として保持**（Y列HYPERLINK用）
-
-**URL検証後にナビゲート**（7-1.5と同じ検証関数を実行）
-
-再度ロード待機 → 結果取得（Total Soldのみ、URLは保持済み）
-
-**条件分岐まとめ**:
-| 90日間の結果 | 6ヶ月検索 | X列 | Y列 |
-|--------------|-----------|-----|-----|
-| 2以上 | 実行しない | 90日間の値（リンク付き） | 空 |
-| 2未満（0, 1） | 実行する | 90日間の値（リンク付き） | 6ヶ月間の値（リンク付き） |
-
-### Step 8: 結果記録（バッチ書き込み）
-
-**TodoWrite更新**: `結果をスプレッドシートに記録` → `in_progress`
-
-5件分をまとめてMCPツールでバッチ書き込み:
-
-#### 書き込み形式: HYPERLINK関数
-
-販売数に検索結果URLへのリンクを埋め込む:
-
-**⚠️ URLは7-1/7-5で生成・保持した値を使用**（`window.location.href` はMCPセキュリティ制限でブロック）
-
-```
-mcp__google-sheets__batch_update_cells
-spreadsheet_id: 1pmbzGCHCqd0EiyuJBl6rfUEGXVITcBDMGPg9bQ67d-g
-sheet: AI作業用
-ranges: {
-  "X{行番号1}": [['=HYPERLINK("{generatedUrl90_1}", "{販売数1}")']],
-  "X{行番号2}": [['=HYPERLINK("{generatedUrl90_2}", "{販売数2}")']],
-  ...
-  "Y{行番号}": [['=HYPERLINK("{generatedUrl180}", "{販売数}")']]  // 条件該当時のみ
-}
-```
-
-**例**:
-```
-"X5": [['=HYPERLINK("https://www.ebay.com/sh/research?marketplace=EBAY-US&keywords=Crab+Plate&dayRange=90&tabName=SOLD", "3")']]
-```
-→ セルには「3」と表示され、クリックで検索結果ページに遷移
-
-**注意事項**:
-- URL内に `"` が含まれる場合は `""` にエスケープする
-- エラー時（URLエラー、タイムアウト等）はリンクなしで文字列のみ記録
-- 販売数が0でもリンク付きで記録（検索結果確認のため有用）
-
-### Step 9: ループ継続
-
-1. Step 7-8を繰り返し
-2. **5件ごとに進捗報告**: 「進捗: 20/100件完了（20%）」
-3. **20件ごとにタブリフレッシュ**（メモリ管理）: タブを閉じて再作成
-
-**TodoWrite更新**:
-- `並列処理で販売数調査` → `completed`
-- `結果をスプレッドシートに記録` → `completed`
-
-### Step 10: 完了処理
-
-**TodoWrite更新**: `サマリー報告を出力` → `in_progress`
-
-**サマリー報告（テーブル形式）**:
-
-| 項目 | 結果 |
-|------|------|
-| 処理件数 | {処理した件数} |
-| 成功 | {成功件数} |
-| エラー | {エラー件数}（行番号: {該当行}） |
-| 6ヶ月検索実行 | {6ヶ月検索を実行した件数} |
-| 処理時間 | {開始から終了までの時間} |
-
-**TodoWrite更新**: `サマリー報告を出力` → `completed`
 
 ---
 
 ## エラーハンドリング
 
-| エラー種別 | 検出方法 | 対応 | 記録値 |
-|------------|----------|------|--------|
-| URL形式不正 | `_nkw=`なし | 次へスキップ | 「URLエラー」 |
-| ログイン切れ | URL検出 | 処理中断 | ユーザー通知 |
-| CAPTCHA出現 | iframe検出 | 処理中断 | ユーザー通知 |
-| 検索結果なし | DOM検出 | 正常終了 | 0（リンク付き） |
-| ページタイムアウト | 10秒経過 | リトライ3回 | 「タイムアウト」 |
-| DOM要素未検出 | querySelector失敗 | リトライ3回 | 「取得エラー」 |
-| 書き込み失敗 | MCP例外 | リトライ2回 | ログ出力 |
+| エラー | 対応 | 続行 |
+|--------|------|------|
+| ログイン切れ/CAPTCHA | 処理中断、ユーザー通知 | ❌ |
+| 検索結果なし | 0として記録（リンク付き） | ✅ |
+| タイムアウト/DOM未検出 | リトライ3回 | ✅ |
+| URL形式不正 | 「URLエラー」記録 | ✅ |
 
-**リトライ間隔**: 2秒→5秒→10秒
+**詳細**: [references/error-handling.md](references/error-handling.md)
 
 ---
 
@@ -397,25 +84,56 @@ ranges: {
 
 | 指定 | 動作 |
 |------|------|
-| 「全て」 | X列が空の全行を処理 |
-| 行番号指定 | 指定行以降のX列空の行を処理 |
+| 全件 | X列空の全行を処理 |
+| アイテムナンバー | C列から該当行を検索して処理 |
 | 件数指定 | 指定件数のみ処理 |
-| アイテムナンバー指定 | C列から該当行を検索して処理 |
 
 ---
 
-## 期待される効率化効果
+## MCP制限への対応
 
-| 項目 | 従来（順次） | 並列処理版 | 改善率 |
-|------|------------|-----------|--------|
-| 100件処理時間 | 8-10分 | 2.5-3分 | **-70%** |
-| UI操作回数 | 300回 | 0回 | **-100%** |
-| MCP呼び出し | 多数 | 最適化済み | **-50%** |
+| 制限 | 対応方法 |
+|------|----------|
+| `chrome://newtab/`でJS実行不可 | タブ作成後eBayへナビゲート |
+| URL文字列の戻り値ブロック | タイムスタンプ（数値）のみ取得、URLはClaude側で構築 |
+| `window.location.href`ブロック | URL生成時に保持、HYPERLINK用に再利用 |
+
+---
+
+## LINE通知
+
+処理完了後に必ず実行:
+
+```bash
+/Users/jushiku/ebay在庫仕入れ処理/.claude/hooks/notify-line.sh "【eBay販売件数調査完了】
+処理: {件数}件（成功: {成功} / エラー: {エラー}）
+処理時間: {時間}
+
+ID: 90日間 / 6ヶ月間
+{アイテムID1}: {90日件数}件 / {6ヶ月件数}件
+{アイテムID2}: {90日件数}件 / {6ヶ月件数}件
+...
+
+結果: https://docs.google.com/spreadsheets/d/1pmbzGCHCqd0EiyuJBl6rfUEGXVITcBDMGPg9bQ67d-g"
+```
+
+※6ヶ月検索を実行したアイテムのみリスト表示（90日間>=2のアイテムは省略）
+※環境変数未設定時のみスキップ
+
+---
+
+## 参照ドキュメント
+
+| ファイル | 内容 |
+|----------|------|
+| [references/selectors.md](references/selectors.md) | タイムスタンプ取得、URL構築、DOMセレクター |
+| [references/workflow-detail.md](references/workflow-detail.md) | 各ステップの詳細手順 |
+| [references/error-handling.md](references/error-handling.md) | エラー検出・リトライ戦略 |
 
 ---
 
 ## 前提条件
 
-- Google Sheets MCPサーバー設定済み
-- eBay Seller Hubアクセス権限あり（ログイン済み）
-- Chrome拡張（claude-in-chrome）でブラウザ操作可能
+- Google Sheets MCP設定済み
+- eBay Seller Hubログイン済み
+- Claude in Chrome拡張有効

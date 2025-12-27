@@ -49,3 +49,25 @@ skill: "ebay-sold-count"
 ```
 
 これにより、SKILL.mdに定義されたeBay Product Research検索と販売件数記録のワークフローが確実に実行される。
+
+## Claude in Chrome MCP セキュリティ制限
+
+Claude in Chrome MCPは、セキュリティ対策として以下のデータをJavaScript実行結果（javascript_tool）として返すことをブロックする：
+
+- URLやクエリ文字列を含むデータ
+- クッキー情報
+- セッション情報
+
+### ブロックされる操作例
+
+| 操作 | コード例 | 結果 |
+|------|---------|------|
+| URL取得 | `window.location.href` | ブロック |
+| URL含むJSON | `JSON.stringify({url: location.href})` | ブロック |
+| クエリ文字列 | `location.search` | ブロック |
+
+### 代替方法
+
+1. **URL生成時に保持**: ナビゲート用URLを生成した時点で変数に保持
+2. **結果取得は数値・テキストのみ**: javascript_toolでは数値やテキストのみ取得
+3. **保持したURLを再利用**: HYPERLINKなどに使用する場合は保持済みURLを使用
