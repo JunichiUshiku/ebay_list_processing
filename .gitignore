@@ -1,5 +1,6 @@
 # 認証情報
 credentials/
+.env
 
 # OS別設定（テンプレートからコピーして使用）
 .claude/settings.json

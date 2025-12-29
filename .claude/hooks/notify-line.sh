@@ -2,9 +2,16 @@
 # LINE Messaging API 通知スクリプト
 # 使用法: ./notify-line.sh "メッセージ"
 #
-# 必要な環境変数:
-#   LINE_CHANNEL_TOKEN - チャネルアクセストークン
-#   LINE_USER_ID - 送信先ユーザーID
+# 環境変数の読み込み元:
+#   1. プロジェクトの .env ファイル
+#   2. シェル環境変数
+
+# スクリプトのディレクトリからプロジェクトルートの.envを読み込む
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+if [ -f "$PROJECT_ROOT/.env" ]; then
+  export $(grep -v '^#' "$PROJECT_ROOT/.env" | xargs)
+fi
 
 LINE_CHANNEL_TOKEN="${LINE_CHANNEL_TOKEN}"
 LINE_USER_ID="${LINE_USER_ID}"
