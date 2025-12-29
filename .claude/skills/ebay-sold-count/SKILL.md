@@ -105,7 +105,7 @@ TodoWriteで以下を登録し進捗追跡:
 処理完了後に必ず実行:
 
 ```bash
-/Users/jushiku/ebay在庫仕入れ処理/.claude/hooks/notify-line.sh "【eBay販売件数調査完了】
+.claude/hooks/notify-line.sh "【eBay販売件数調査完了】
 処理: {件数}件（成功: {成功} / エラー: {エラー}）
 処理時間: {時間}
 
