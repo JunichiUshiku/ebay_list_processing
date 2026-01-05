@@ -117,7 +117,9 @@ ID: 90日間 / 6ヶ月間
 結果: https://docs.google.com/spreadsheets/d/1pmbzGCHCqd0EiyuJBl6rfUEGXVITcBDMGPg9bQ67d-g"
 ```
 
-※6ヶ月検索を実行したアイテムのみリスト表示（90日間>=2のアイテムは省略）
+※処理した全アイテムをリスト表示
+  - 90日間 < 2: 「ID: X件 / Y件」（6ヶ月検索を実行）
+  - 90日間 >= 2: 「ID: X件 / -」（6ヶ月検索を実行せず）
 ※環境変数未設定時のみスキップ
 
 ---
