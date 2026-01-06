@@ -33,8 +33,24 @@ if [ -z "$MESSAGE" ]; then
   exit 1
 fi
 
-# Node.jsでJSONを構築し、パイプでcurlに渡す（日本語・改行対応）
-RESPONSE=$(node -e "
+# レスポンスチェック関数
+check_response() {
+  local response="$1"
+  if echo "$response" | grep -q "sentMessages"; then
+    return 0
+  elif [ -z "$response" ] || [ "$response" = "{}" ]; then
+    return 0
+  else
+    return 1
+  fi
+}
+
+# リトライループ（最大3回、指数バックオフ）
+MAX_RETRIES=3
+RETRY_DELAY=2
+
+for attempt in $(seq 1 $MAX_RETRIES); do
+  RESPONSE=$(node -e "
 const msg = process.argv[1];
 const userId = process.argv[2];
 console.log(JSON.stringify({
@@ -46,14 +62,20 @@ console.log(JSON.stringify({
   -H "Authorization: Bearer $LINE_CHANNEL_TOKEN" \
   --data-binary @-)
 
-# レスポンスチェック（sentMessagesが含まれていれば成功）
-if echo "$RESPONSE" | grep -q "sentMessages"; then
-  echo "OK: LINE通知送信完了"
-  exit 0
-elif [ -z "$RESPONSE" ] || [ "$RESPONSE" = "{}" ]; then
-  echo "OK: LINE通知送信完了"
-  exit 0
-else
-  echo "ERROR: $RESPONSE"
-  exit 1
-fi
+  if check_response "$RESPONSE"; then
+    echo "OK: LINE通知送信完了 (試行回数: $attempt/$MAX_RETRIES)"
+    exit 0
+  else
+    echo "WARNING: LINE通知送信失敗 (試行 $attempt/$MAX_RETRIES): $RESPONSE" >&2
+    if [ $attempt -lt $MAX_RETRIES ]; then
+      echo "INFO: ${RETRY_DELAY}秒後にリトライします..." >&2
+      sleep $RETRY_DELAY
+      RETRY_DELAY=$((RETRY_DELAY * 2))  # 指数バックオフ: 2s → 4s → 8s
+    fi
+  fi
+done
+
+# 全リトライ失敗 → ログのみ、ワークフロー継続（exit 0）
+echo "ERROR: LINE通知送信が${MAX_RETRIES}回失敗しました。最後のレスポンス: $RESPONSE" >&2
+echo "INFO: 処理結果はスプレッドシートに記録されています。"
+exit 0  # ← ワークフロー継続のため0を返す
