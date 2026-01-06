@@ -45,7 +45,7 @@ cat > ~/.claude/skill-state.json << 'EOF'
 {
   "skill": "ebay-sold-count",
   "progress": {"completed": 0, "total": 0, "lastRow": 0},
-  "message": "ebay-sold-count を再開。5件検索ごとに即座にスプレッドシートへ書き込むこと。"
+  "message": "【重要】まず Skill ツールで skill: ebay-sold-count を実行し、全指示を再ロードすること。その後、進捗に従って処理を継続。"
 }
 EOF
 ```
@@ -57,7 +57,7 @@ cat > ~/.claude/skill-state.json << 'EOF'
 {
   "skill": "ebay-sold-count",
   "progress": {"completed": 0, "total": 118, "lastRow": 32},
-  "message": "ebay-sold-count を再開。0/118件完了。行33から処理を開始。5件検索ごとに即座にスプレッドシートへ書き込むこと。"
+  "message": "【重要】まず Skill ツールで skill: ebay-sold-count を実行し、全指示を再ロードすること。進捗: 0/118件完了、行33から処理継続。"
 }
 EOF
 ```
@@ -403,7 +403,7 @@ cat > ~/.claude/skill-state.json << 'EOF'
 {
   "skill": "ebay-sold-count",
   "progress": {"completed": 25, "total": 118, "lastRow": 57},
-  "message": "ebay-sold-count を再開。25/118件完了。行58から処理を継続。5件検索ごとに即座にスプレッドシートへ書き込むこと。"
+  "message": "【重要】まず Skill ツールで skill: ebay-sold-count を実行し、全指示を再ロードすること。進捗: 25/118件完了、行58から処理継続。"
 }
 EOF
 ```
