@@ -65,25 +65,27 @@ TodoWriteで以下を登録し進捗追跡:
 
 ```
 [Step 0: 進捗記録初期化]
-0. skill-state.json作成（completed:0, total:0）
+0. skill-state.json作成（target_rows:[], cursor:0, total:0）
 
 [初期化]
 1. TodoWrite登録 → 参照ファイル読み込み → データ取得
-2. skill-state.json更新（total件数を記録）
+2. skill-state.json更新（target_rows（アイテム番号リスト）とtotal件数を記録）
 3. 5タブ作成 → 各タブをeBayへナビゲート
 
-[並列処理ループ]（5件単位）
-4. タイムスタンプ取得（JS: 数値のみ）
-5. Claude側でURL構築 → 保持
-6. 5タブに並列ナビゲート
-7. Total Sold取得 → 90日<2なら6ヶ月再検索
-8. **【即時書き込み】** スプレッドシートへ5件書き込み
-9. **【進捗更新】** skill-state.json更新（completed+5, lastRow更新）
-10. 次のバッチへ
+[並列処理ループ]（5件単位、cursorベース）
+4. C列取得 → アイテム→行マップ作成（処理開始時に1回のみ）
+5. target_rows[cursor:cursor+5] から5件取得 → 行番号解決
+6. E列データ取得 → タイムスタンプ取得（JS: 数値のみ）
+7. Claude側でURL構築 → 保持
+8. 5タブに並列ナビゲート
+9. Total Sold取得 → 90日<2なら6ヶ月再検索
+10. **【即時書き込み】** スプレッドシートへ5件書き込み
+11. **【進捗更新】** skill-state.json更新（cursor+5、次のアイテム番号を記録）
+12. 次のバッチへ
 
 [完了]
-11. LINE通知送信 → サマリー報告
-12. skill-state.json削除（正常完了時のみ）
+13. LINE通知送信 → サマリー報告
+14. skill-state.json削除（正常完了時のみ）
 ```
 
 ---

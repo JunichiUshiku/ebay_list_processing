@@ -44,20 +44,27 @@
 cat > ~/.claude/skill-state.json << 'EOF'
 {
   "skill": "ebay-sold-count",
-  "progress": {"completed": 0, "total": 0, "lastRow": 0},
+  "target_rows": [],
+  "cursor": 0,
+  "total": 0,
   "message": "【重要】まず Skill ツールで skill: ebay-sold-count を実行し、全指示を再ロードすること。その後、進捗に従って処理を継続。"
 }
 EOF
 ```
 
-データ取得後、total件数を更新：
+データ取得後、target_rows（アイテム番号リスト）とtotal件数を更新：
 
 ```bash
-cat > ~/.claude/skill-state.json << 'EOF'
+# アイテム番号リストをJSON配列として構築
+TARGET_ROWS_JSON='["403498476787","405090876155","403498476788"]'
+
+cat > ~/.claude/skill-state.json << EOF
 {
   "skill": "ebay-sold-count",
-  "progress": {"completed": 0, "total": 118, "lastRow": 32},
-  "message": "【重要】まず Skill ツールで skill: ebay-sold-count を実行し、全指示を再ロードすること。進捗: 0/118件完了、行33から処理継続。"
+  "target_rows": ${TARGET_ROWS_JSON},
+  "cursor": 0,
+  "total": 118,
+  "message": "【重要】まず Skill ツールで skill: ebay-sold-count を実行し、全指示を再ロードすること。進捗: 0/118件完了、次はアイテム403498476787から処理開始。"
 }
 EOF
 ```
@@ -107,7 +114,7 @@ data: [["販売数（90日間）", "販売数（6ヶ月間）"]]
 
 **注意**: `serverName:tool_name` 形式は本環境では使用しない。
 
-### 2-2: 処理モード判定とデータ取得（最適化版）
+### 2-2: 処理モード判定とデータ取得（アイテム番号ベース）
 
 **重要**: トークン制限（25,000トークン）を回避するため、必要な列のみを段階的に取得する。
 
@@ -121,143 +128,134 @@ data: [["販売数（90日間）", "販売数（6ヶ月間）"]]
    range: C:C
    ```
 
-2. **行番号特定**
+2. **アイテム番号リスト生成**（行番号は保存しない）
    - C列から指定されたアイテムナンバーを検索
-   - 該当行の行番号を特定（例: 15行目）
+   - 存在確認のみ行い、アイテム番号をリストに追加
+   - 見つからないアイテムは警告を表示
 
-3. **該当行のE列のみ取得**
-   ```
-   mcp__google-sheets__get_sheet_data
-   range: E15:E15
+   ```javascript
+   const targetItems = ["403498476787", "405090876155"];  // ユーザー指定
+   const targetRows = [];  // アイテム番号のみのリスト
+   const notFound = [];
+
+   for (const itemNum of targetItems) {
+     const exists = columnC.some(cell => cell?.trim() === itemNum.trim());
+     if (exists) {
+       targetRows.push(itemNum);
+     } else {
+       notFound.push(itemNum);
+     }
+   }
+
+   if (notFound.length > 0) {
+     console.warn(`見つかりませんでした: ${notFound.join(', ')}`);
+   }
+
+   // target_rows: ["403498476787", "405090876155"]
    ```
 
-4. **キーワード抽出**
+3. **skill-state.json に保存**
+   ```bash
+   TARGET_ROWS_JSON=$(printf '%s\n' "${targetRows[@]}" | jq -R . | jq -s .)
+   cat > ~/.claude/skill-state.json << EOF
+   {
+     "skill": "ebay-sold-count",
+     "target_rows": ${TARGET_ROWS_JSON},
+     "cursor": 0,
+     "total": ${#targetRows[@]},
+     "message": "進捗: 0/${#targetRows[@]}件完了、次はアイテム${targetRows[0]}から処理開始。"
+   }
+   EOF
    ```
-   E列URL: https://www.ebay.com/sch/i.html?_nkw=Crab+Plate&_sacat=0
-   抽出: Crab Plate（+を空白に変換）
-   ```
+
+**注意**: E列の取得は処理時（Step 4）に行うため、ここでは取得しない。
 
 #### 全件処理時
 
-1. **X列のみ取得**
+1. **X列とC列を並列取得**
    ```
-   mcp__google-sheets__get_sheet_data
-   range: X:X
-   ```
-
-2. **処理対象行の特定**
-   - X列で空セルの行番号をリストアップ
-   - 例: [10, 15, 20, 25, 30, ...]
-
-3. **該当行のE列を取得（バッチサイズ制限あり）**
-
-**重要制約**: 1回の取得で最大300行まで（トークン制限 25,000対策）
-
-#### ケース1: 対象行数 ≤ 300行
-
-**連続範囲の場合**:
-```
-mcp__google-sheets__get_sheet_data
-range: E10:E309  # 300行
-```
-
-**非連続範囲の場合**（範囲結合で効率化）:
-```
-# 対象行: [10-20, 25-35, 40-50] (33行)
-range: E10:E20   # 11行
-range: E25:E35   # 11行
-range: E40:E50   # 11行
-```
-
-**最適化ルール**:
-- 連続5行以上は範囲指定
-- 範囲のギャップが50行以上なら分離
-- それ以外は個別指定
-
-#### ケース2: 対象行数 > 300行（分割取得必須）
-
-**例: 450行の処理対象**
-
-分割戦略:
-```
-バッチ1: 行1-300   (300行)
-バッチ2: 行301-450 (150行)
-```
-
-実装:
-```bash
-# バッチ1
-target_batch1 = target_rows[0:300]  # 例: [10, 11, 15, ..., 305]
-first_row = target_batch1[0]        # 10
-last_row = target_batch1[-1]        # 305
-
-mcp__google-sheets__get_sheet_data
-range: E${first_row}:E${last_row}   # E10:E305
-
-# バッチ2
-target_batch2 = target_rows[300:450]  # 例: [310, 315, ..., 500]
-first_row = target_batch2[0]          # 310
-last_row = target_batch2[-1]          # 500
-
-mcp__google-sheets__get_sheet_data
-range: E${first_row}:E${last_row}   # E310:E500
-```
-
-**注意**: 範囲内に処理対象外の行が含まれる場合、取得後にフィルタリング
-
-#### ケース3: 超大量データ（1000行以上）
-
-**警告**: 1000行以上は長時間処理
-
-推奨アプローチ:
-1. ユーザー確認
-   ```
-   WARNING: 1,250行の処理対象があります。
-   推定処理時間: 約50分（5件/分 × 250バッチ）
-   続行しますか？
+   # 並列取得でパフォーマンス最適化
+   mcp__google-sheets__get_sheet_data (2回並列実行)
+   - range: X:X
+   - range: C:C
    ```
 
-2. 分割取得
+2. **アイテム番号リスト生成**（行番号は保存しない）
+   - X列で空セルの行を特定
+   - その行のC列からアイテム番号を取得
+   - アイテム番号のみをリストに追加
+
+   ```javascript
+   const targetRows = [];  // アイテム番号のみのリスト
+
+   for (let i = 1; i < columnX.length; i++) {  // Skip header
+     // X列が空の場合
+     if (!columnX[i] || columnX[i].trim() === "") {
+       const itemNumber = columnC[i]?.trim() || "";
+       if (itemNumber) {
+         targetRows.push(itemNumber);  // アイテム番号のみ追加
+       }
+     }
+   }
+
+   // target_rows: ["403498476787", "405090876155", "403498476788", ...]
    ```
-   バッチ1: 行1-300
-   バッチ2: 行301-600
-   バッチ3: 行601-900
-   バッチ4: 行901-1200
-   バッチ5: 行1201-1250
+
+3. **skill-state.json に保存**
+   ```bash
+   TARGET_ROWS_JSON=$(printf '%s\n' "${targetRows[@]}" | jq -R . | jq -s .)
+   cat > ~/.claude/skill-state.json << EOF
+   {
+     "skill": "ebay-sold-count",
+     "target_rows": ${TARGET_ROWS_JSON},
+     "cursor": 0,
+     "total": ${#targetRows[@]},
+     "message": "進捗: 0/${#targetRows[@]}件完了、次はアイテム${targetRows[0]}から処理開始。"
+   }
+   EOF
    ```
 
-3. 各バッチ後にskill-state.json更新（オートコンパクト対策）
+**注意**: E列の取得は処理時（Step 4）に行うため、ここでは取得しない。
 
-#### エッジケース処理
+**300行制限対応**: X列/C列が300行を超える場合はバッチ取得
 
-**ちょうど300行**:
-```
-対象: 300行 → 1回で完了（分割不要）
-range: E2:E301
-```
+```javascript
+async function fetchColumnInBatches(column, maxRows = 300) {
+  let allData = [];
+  let offset = 2;  // Skip header
 
-**301行**:
-```
-対象: 301行 → 2バッチ
-バッチ1: E2:E301   (300行)
-バッチ2: E302:E302 (1行)
-```
+  while (true) {
+    const range = `${column}${offset}:${column}${offset + maxRows - 1}`;
+    const batch = await getSheetData({range});
+    if (batch.length === 0) break;
 
-**非連続で300行超**:
-```
-対象: [10, 50, 100, ..., 5000] (350行、飛び飛び)
+    allData = allData.concat(batch);
+    if (batch.length < maxRows) break;
+    offset += maxRows;
+  }
+  return allData;
+}
 
-グループ化:
-- E10:E120  (111行中、対象50行)
-- E150:E300 (151行中、対象100行)
-- E350:E500 (151行中、対象100行)
-- E550:E650 (101行中、対象100行)
-
-各範囲取得後、X列が空の行のみフィルタリング
+// X列とC列をバッチ取得
+const [columnX, columnC] = await Promise.all([
+  fetchColumnInBatches('X'),
+  fetchColumnInBatches('C')
+]);
 ```
 
-4. **キーワード抽出**
-   - 各URLからキーワードを抽出
+#### 大量データの処理時間見積もり
+
+**1000件以上の場合はユーザー確認**:
+```
+WARNING: 1,250件の処理対象があります。
+推定処理時間: 約50分（5件/分 × 250バッチ）
+続行しますか？
+```
+
+**注意**:
+- E列データの取得は Step 4 の処理時に5件バッチごとに実行
+- C列データ（アイテム→行マップ）は処理開始時に1回だけ取得
+- 処理中断時は skill-state.json から再開可能
 
 ---
 
@@ -315,6 +313,74 @@ url: https://www.ebay.com
 ```
 
 **禁止事項**: 結果をメモリに蓄積して後でまとめて書き込むこと
+
+---
+
+### 4-0: 初期化とループ準備（アイテム番号ベース）
+
+#### 再開時の境界チェック
+
+skill-state.json が存在する場合、処理完了済みかチェック：
+
+```javascript
+if (cursor >= total) {
+  console.log("処理完了済み");
+  fs.unlinkSync('~/.claude/skill-state.json');
+  return;
+}
+```
+
+#### C列取得とアイテム→行マップ作成
+
+処理開始時に1回だけ実行（各バッチで再取得は不要）：
+
+```javascript
+// C列全体を取得
+const columnC = await getSheetData({range: "C:C"});
+
+// アイテム番号 → 行番号のマップを作成
+const itemToRowMap = {};
+columnC.forEach((item, index) => {
+  if (item?.trim()) {
+    itemToRowMap[item.trim()] = index + 1;  // 1-based indexing
+  }
+});
+
+// 例: {"403498476787": 33, "405090876155": 45, ...}
+```
+
+#### cursorベースのループ
+
+```javascript
+while (cursor < total) {
+  // 5件バッチ取得
+  const batchEnd = Math.min(cursor + 5, total);
+  const batchItems = target_rows.slice(cursor, batchEnd);
+
+  // 各アイテムの行番号を解決
+  const batchWithRows = batchItems.map(itemNumber => ({
+    item: itemNumber,
+    row: itemToRowMap[itemNumber]
+  }));
+
+  // E列データ取得（該当行のみ）
+  const eColumnData = await Promise.all(
+    batchWithRows.map(({row}) =>
+      getSheetData({range: `E${row}:E${row}`})
+    )
+  );
+
+  // キーワード抽出
+  const keywords = eColumnData.map(([url]) =>
+    extractKeywordFromURL(url)
+  );
+
+  // 以降、4-1 からの処理を実行...
+  // （URL構築、並列ナビゲート、結果取得、書き込み、cursor更新）
+
+  cursor = batchEnd;
+}
+```
 
 ---
 
@@ -399,24 +465,39 @@ ranges: {
 各バッチのスプレッドシート書き込み完了後、**必ず**進捗を更新：
 
 ```bash
-cat > ~/.claude/skill-state.json << 'EOF'
+# cursor更新（5件バッチ完了ごとに+5）
+CURSOR=$((CURSOR + 5))
+
+# 次のアイテム番号を取得
+NEXT_ITEM=$(jq -r ".target_rows[$CURSOR] // \"完了\"" ~/.claude/skill-state.json)
+
+# アトミック書き込み（tmp → rename）
+TEMP_FILE="$HOME/.claude/skill-state.json.tmp.$$"
+cat > "$TEMP_FILE" << EOF
 {
   "skill": "ebay-sold-count",
-  "progress": {"completed": 25, "total": 118, "lastRow": 57},
-  "message": "【重要】まず Skill ツールで skill: ebay-sold-count を実行し、全指示を再ロードすること。進捗: 25/118件完了、行58から処理継続。"
+  "target_rows": $(jq -c '.target_rows' ~/.claude/skill-state.json),
+  "cursor": ${CURSOR},
+  "total": $(jq -r '.total' ~/.claude/skill-state.json),
+  "message": "【重要】まず Skill ツールで skill: ebay-sold-count を実行し、全指示を再ロードすること。進捗: ${CURSOR}/$(jq -r '.total' ~/.claude/skill-state.json)件完了、次はアイテム${NEXT_ITEM}から処理継続。"
 }
 EOF
+mv "$TEMP_FILE" "$HOME/.claude/skill-state.json"
 ```
 
 **更新項目**:
 | 項目 | 説明 |
 |------|------|
-| `completed` | 処理完了した件数 |
-| `total` | 処理対象の総件数 |
-| `lastRow` | 最後に処理した行番号 |
-| `message` | オートコンパクト後の再開指示 |
+| `target_rows` | アイテム番号リスト（不変） |
+| `cursor` | 処理完了した件数（インデックス） |
+| `total` | 処理対象の総件数（不変） |
+| `message` | オートコンパクト後の再開指示（次のアイテム番号を含む） |
 
-**重要**: この更新により、オートコンパクト発生後もSessionStartフックが正確な再開位置を注入できる。
+**重要**:
+- cursor は処理済み件数を示すインデックス
+- target_rows は変更しない（常に全アイテムリスト）
+- アトミック書き込み（tmp → rename）で競合を防止
+- この更新により、オートコンパクト発生後もSessionStartフックが正確な再開位置を注入できる
 
 ---
 
