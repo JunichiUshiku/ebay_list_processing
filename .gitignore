@@ -5,6 +5,7 @@ credentials/
 # OS別設定（テンプレートからコピーして使用）
 .claude/settings.json
 .claude/settings.local.json
+.mcp.json
 
 # 再生成可能
 node_modules/
