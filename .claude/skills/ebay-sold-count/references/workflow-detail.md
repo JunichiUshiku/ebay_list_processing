@@ -73,14 +73,18 @@ EOF
 
 ## Step 1: 参照ファイル読み込み
 
+以下の3ファイルを全て読み込む（SKILL.md CRITICAL RULES準拠）:
+
 ```
 Read: .claude/skills/ebay-sold-count/references/selectors.md
+Read: .claude/skills/ebay-sold-count/references/workflow-detail.md
+Read: .claude/skills/ebay-sold-count/references/error-handling.md
 ```
 
-このファイルには以下が記載:
-- タイムスタンプ取得関数
-- DOM要素のセレクター
-- エラー検出コード
+各ファイルの内容:
+- **selectors.md**: タイムスタンプ取得、URL構築、DOMセレクター、エラー検出
+- **workflow-detail.md**: 全ステップの詳細手順、バッチ処理、進捗管理
+- **error-handling.md**: エラー検出戦略、リトライロジック、通知
 
 ---
 
@@ -98,6 +102,8 @@ range: X1:Y1
 ヘッダーが空の場合:
 ```
 mcp__google-sheets__update_cells
+spreadsheet_id: 1pmbzGCHCqd0EiyuJBl6rfUEGXVITcBDMGPg9bQ67d-g
+sheet: AI作業用
 range: X1:Y1
 data: [["販売数（90日間）", "販売数（6ヶ月間）"]]
 ```
@@ -370,10 +376,15 @@ while (cursor < total) {
     )
   );
 
-  // キーワード抽出
+  // キーワード抽出（詳細: selectors.md#キーワード抽出）
   const keywords = eColumnData.map(([url]) =>
-    extractKeywordFromURL(url)
+    extractKeywordFromURL(url)  // URL から _nkw パラメータを抽出
   );
+
+  // _nkw が取得できない場合は URLエラーとして記録し、該当アイテムの検索をスキップ
+  // - X列: "URLエラー" を書き込み
+  // - Y列: 空欄のまま
+  // - 他の正常アイテムは通常通り検索して同一バッチで書き込み
 
   // 以降、4-1 からの処理を実行...
   // （URL構築、並列ナビゲート、結果取得、書き込み、cursor更新）
@@ -394,7 +405,9 @@ https://www.ebay.com/sh/research?marketplace=EBAY-US
   &dayRange=90
   &startDate={start}
   &endDate={now}
-  &categoryId=0&offset=0&limit=50&tabName=SOLD&tz=Asia%2FTokyo
+  &categoryId=0
+  &sellerCountry=SellerLocation%3A%3A%3AJP
+  &offset=0&limit=50&tabName=SOLD&tz=Asia%2FTokyo
 ```
 
 **重要**: 構築したURLを保持（HYPERLINK用に再利用）
@@ -434,8 +447,14 @@ Array.from(cells).reduce((sum, cell) => sum + (parseInt(cell.innerText) || 0), 0
 
 6ヶ月URL構築:
 ```
-dayRange=180
-startDate={now - 180日分のミリ秒}
+https://www.ebay.com/sh/research?marketplace=EBAY-US
+  &keywords={encodeURIComponent(キーワード)}
+  &dayRange=180
+  &startDate={now - 180日分のミリ秒}
+  &endDate={now}
+  &categoryId=0
+  &sellerCountry=SellerLocation%3A%3A%3AJP
+  &offset=0&limit=50&tabName=SOLD&tz=Asia%2FTokyo
 ```
 
 再ナビゲート → 結果取得
@@ -465,8 +484,10 @@ ranges: {
 各バッチのスプレッドシート書き込み完了後、**必ず**進捗を更新：
 
 ```bash
-# cursor更新（5件バッチ完了ごとに+5）
-CURSOR=$((CURSOR + 5))
+# cursor更新（batchEndと同じロジック: min(cursor+5, total)）
+CURSOR=$(jq -r ".cursor" ~/.claude/skill-state.json)
+TOTAL=$(jq -r ".total" ~/.claude/skill-state.json)
+CURSOR=$(( CURSOR + 5 > TOTAL ? TOTAL : CURSOR + 5 ))
 
 # 次のアイテム番号を取得
 NEXT_ITEM=$(jq -r ".target_rows[$CURSOR] // \"完了\"" ~/.claude/skill-state.json)
@@ -502,6 +523,28 @@ mv "$TEMP_FILE" "$HOME/.claude/skill-state.json"
 ---
 
 ## Step 6: LINE通知送信（バッチ分割版）
+
+### ⚠️ CRITICAL: 実装ルール（必読）
+
+**必須スクリプト**: `.claude/hooks/notify-line.sh`
+- このスクリプトを必ず実行すること
+- スクリプトを読まずに独自実装しない
+- LINE Messaging API（push message）を使用
+
+**使用する環境変数**（`.env` から自動読み込み）:
+```bash
+LINE_CHANNEL_TOKEN  # LINE Messaging API チャンネルアクセストークン
+LINE_USER_ID        # 送信先ユーザーID
+```
+
+**禁止事項**:
+- ❌ `LINE_NOTIFY_TOKEN` の使用（LINE Notify は使わない）
+- ❌ スクリプトを読まずに環境変数チェック
+- ❌ 独自の curl コマンドで送信
+
+**エラー判定**:
+- スクリプト終了コード `1` → 環境変数未設定（通知スキップ）
+- スクリプト終了コード `0` → 成功または送信失敗でも処理継続
 
 ### 6-1: アイテムリストのバッチ分割
 
@@ -546,8 +589,15 @@ ${batch_items}"
 結果: https://docs.google.com/spreadsheets/d/1pmbzGCHCqd0EiyuJBl6rfUEGXVITcBDMGPg9bQ67d-g"
   fi
 
-  # 送信（リトライ付き - notify-line.sh内で3回リトライ）
-  .claude/hooks/notify-line.sh "$message"
+  # 送信（CRITICAL: 必ず notify-line.sh を使用）
+  # - LINE Messaging API (push message) を使用
+  # - 環境変数: LINE_CHANNEL_TOKEN, LINE_USER_ID (.envから自動読み込み)
+  # - リトライ: スクリプト内で3回自動リトライ（指数バックオフ）
+  # - exit 0 = 成功または送信失敗でも処理継続
+  # - exit 1 = 環境変数未設定（通知スキップ）
+  if ! .claude/hooks/notify-line.sh "$message"; then
+    echo "WARNING: 環境変数が未設定のためLINE通知をスキップします。.env を確認してください。"
+  fi
 
   # レート制限対策（最後以外）
   [ $page -lt $total_pages ] && sleep 1
@@ -680,8 +730,8 @@ for each バッチ (5件単位):
 
 **前提条件チェック**:
 - ✅ 直前バッチのスプレッドシート書き込み完了
-- ✅ skill-state.json 更新完了（lastRow記録済み）
-- ✅ 次の開始行番号をメモリに保持
+- ✅ skill-state.json 更新完了（cursor記録済み）
+- ✅ 次の処理対象アイテム番号をメモリに保持
 
 ---
 
@@ -750,12 +800,13 @@ duration: 2-3
 
 **skill-state.json から再開位置を取得**:
 ```bash
-LAST_ROW=$(jq -r '.progress.lastRow' ~/.claude/skill-state.json)
-NEXT_ROW=$((LAST_ROW + 1))
+CURSOR=$(jq -r '.cursor' ~/.claude/skill-state.json)
+TOTAL=$(jq -r '.total' ~/.claude/skill-state.json)
 ```
 
 **次のバッチを開始**:
-- 行 ${NEXT_ROW} から5件分のE列データを取得
+- target_rows[${CURSOR}] から次の5件のアイテム番号を取得
+- C列からアイテム→行マップで行番号を解決
 - 新しいタイムスタンプでURL構築
 - 新しいタブIDで並列ナビゲート
 
@@ -765,16 +816,16 @@ NEXT_ROW=$((LAST_ROW + 1))
 
 ```
 現在の状態:
-- completed: 20件
-- lastRow: 44
-- 次の処理: 行45-49
+- cursor: 20
+- total: 50件
+- 次の処理: target_rows[20:25] の5件
 
 リフレッシュ実行:
 1. タブ12301-12305をクローズ
 2. タブ12401-12405を作成
 3. 各タブを ebay.com へナビゲート ← chrome://newtab/回避
 4. タイムスタンプ再取得: {now: 1704557000000, ...}
-5. 行45から処理再開
+5. cursor=20から処理再開（次の5件のアイテム番号を取得）
 ```
 
 ### エラーハンドリング

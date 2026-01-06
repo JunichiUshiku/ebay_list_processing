@@ -58,6 +58,35 @@ https://www.ebay.com/sh/research?marketplace=EBAY-US&keywords={キーワード�
 
 **重要**: 構築したURLを保持（HYPERLINK作成用に再利用）
 
+### キーワード抽出
+
+E列URLから検索キーワードを抽出する処理:
+
+**URL形式例**:
+```
+https://www.ebay.com/sch/i.html?_nkw=nintendo+switch&_sacat=0
+```
+
+**抽出ロジック**:
+```javascript
+function extractKeywordFromURL(url) {
+  try {
+    const urlObj = new URL(url);
+    const keyword = urlObj.searchParams.get('_nkw');
+    return keyword ? decodeURIComponent(keyword) : '';
+  } catch (error) {
+    console.error('URL parse error:', error);
+    return '';
+  }
+}
+```
+
+**戻り値**: URLデコードされたキーワード文字列（例: "nintendo switch"）
+
+**エラー処理**:
+- URL不正: 空文字列を返す
+- _nkwパラメータなし: 空文字列を返す
+
 ---
 
 ## 結果取得

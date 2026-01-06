@@ -7,24 +7,17 @@ description: eBay販売履歴件数調査ワークフロー（並列処理版）
 
 ## CRITICAL RULES
 
-1. **参照ファイル必読**: 処理前に `references/selectors.md` を読み込む
-2. **タブ作成後ナビゲート必須**: 新規タブは `chrome://newtab/` でJS実行不可 → eBayへ先にナビゲート
-3. **タイムスタンプ動的取得**: JSで数値のみ取得、URLはClaude側で構築（URL文字列はMCPでブロック）
-4. **URL保持必須**: 生成したURLを保持しHYPERLINK作成に再利用（`window.location.href`は使用不可）
-5. **データ取得制約（重要）**: トークン制限回避のため、必要最小限の列のみを取得
-   - アイテムナンバー指定時: C列全行 → 該当行のE列のみ
-   - 全件処理時: X列全行 → 空セルの行のE列のみ
-   - ❌ 禁止例: `range: C:Y`、`range: A:Z`
-   - ✅ 正解例: `range: C:C`、`range: E15:E15`
-   - **E列バッチ取得上限: 最大300行**（超過時は分割取得、詳細は workflow-detail.md 参照）
-6. **LINE通知必須**: 処理完了後に必ずLINE通知を送信
-7. **即時書き込み必須（最重要）**: 各バッチ（5件）の検索完了後、**次のバッチに進む前に**必ずスプレッドシートへ書き込む
-   - ❌ 禁止: 複数バッチの結果をメモリに保持して後でまとめて書き込む
-   - ✅ 必須: 5件検索 → 5件書き込み → 進捗更新 → 次の5件検索...
+1. **参照ファイル必読**: 処理開始前に以下を必ず全て読み込む
+   - `references/selectors.md` - URL構築・DOM操作・タイムスタンプ取得
+   - `references/workflow-detail.md` - 詳細手順・進捗管理・バッチ処理
+   - `references/error-handling.md` - エラー検出・リトライ・通知
+
+2. **即時書き込み必須**: 5件バッチ完了後、次のバッチ前に必ずスプレッドシート書き込み
    - 理由: オートコンパクト時のデータ損失防止
-8. **進捗記録必須**: 各バッチ書き込み後に `skill-state.json` を更新（オートコンパクト後の再開用）
-9. **20件ごとのタブリフレッシュ必須**: メモリリーク防止と chrome://newtab/ 状態回避
-   - 詳細: [references/workflow-detail.md#20件ごとのタブリフレッシュ](references/workflow-detail.md)
+   - 詳細: workflow-detail.md 参照
+
+3. **進捗記録必須**: 各バッチ書き込み後に skill-state.json 更新
+   - 詳細: workflow-detail.md Step 5.5 参照
 
 ---
 
@@ -33,7 +26,7 @@ description: eBay販売履歴件数調査ワークフロー（並列処理版）
 TodoWriteで以下を登録し進捗追跡:
 
 - [ ] **Step 0: skill-state.json作成**（必須・最初に実行）
-- [ ] 参照ファイル読み込み（selectors.md）
+- [ ] 参照ファイル読み込み（selectors.md, workflow-detail.md, error-handling.md）
 - [ ] データ取得・処理対象特定（total件数を確定）
 - [ ] 5タブ作成 + eBayナビゲート
 - [ ] 並列処理で販売数調査（5件単位 → 即時書き込み → 進捗更新）
@@ -61,45 +54,9 @@ TodoWriteで以下を登録し進捗追跡:
 
 ---
 
-## 処理フロー概要
-
-```
-[Step 0: 進捗記録初期化]
-0. skill-state.json作成（target_rows:[], cursor:0, total:0）
-
-[初期化]
-1. TodoWrite登録 → 参照ファイル読み込み → データ取得
-2. skill-state.json更新（target_rows（アイテム番号リスト）とtotal件数を記録）
-3. 5タブ作成 → 各タブをeBayへナビゲート
-
-[並列処理ループ]（5件単位、cursorベース）
-4. C列取得 → アイテム→行マップ作成（処理開始時に1回のみ）
-5. target_rows[cursor:cursor+5] から5件取得 → 行番号解決
-6. E列データ取得 → タイムスタンプ取得（JS: 数値のみ）
-7. Claude側でURL構築 → 保持
-8. 5タブに並列ナビゲート
-9. Total Sold取得 → 90日<2なら6ヶ月再検索
-10. **【即時書き込み】** スプレッドシートへ5件書き込み
-11. **【進捗更新】** skill-state.json更新（cursor+5、次のアイテム番号を記録）
-12. 次のバッチへ
-
-[完了]
-13. LINE通知送信 → サマリー報告
-14. skill-state.json削除（正常完了時のみ）
-```
-
----
-
 ## エラーハンドリング
 
-| エラー | 対応 | 続行 |
-|--------|------|------|
-| ログイン切れ/CAPTCHA | 処理中断、ユーザー通知 | ❌ |
-| 検索結果なし | 0として記録（リンク付き） | ✅ |
-| タイムアウト/DOM未検出 | リトライ3回 | ✅ |
-| URL形式不正 | 「URLエラー」記録 | ✅ |
-
-**詳細**: [references/error-handling.md](references/error-handling.md)
+詳細は [references/error-handling.md](references/error-handling.md) を参照。
 
 ---
 
@@ -125,6 +82,17 @@ TodoWriteで以下を登録し進捗追跡:
 
 ## LINE通知
 
+### CRITICAL: 実装必須ルール
+
+1. **スクリプト実行必須**: 必ず `.claude/hooks/notify-line.sh` を実行して送信
+2. **環境変数**: `.env` の `LINE_CHANNEL_TOKEN` と `LINE_USER_ID` のみ使用
+3. **禁止事項**: `LINE_NOTIFY_TOKEN` の使用禁止（LINE Notify サービスは使わない）
+4. **エラー判定**: スクリプトが `exit 1` を返した場合のみ環境変数エラーと報告
+   - `exit 1` の場合は **LINE通知をスキップして処理継続**
+   - `exit 0` の場合は成功扱い（リトライ失敗でも処理継続）
+
+### 送信仕様
+
 処理完了後に必ず実行。**100件ごとに分割送信**（大量処理時のメッセージ長制限対策）。
 
 ### バッチ送信ルール
@@ -145,8 +113,6 @@ TodoWriteで以下を登録し進捗追跡:
 ### 詳細手順
 
 詳細手順: [references/workflow-detail.md#step-6-line通知送信](references/workflow-detail.md)
-
-※環境変数未設定時のみスキップ
 
 ---
 
