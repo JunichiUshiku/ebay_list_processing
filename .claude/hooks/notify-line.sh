@@ -33,17 +33,18 @@ if [ -z "$MESSAGE" ]; then
   exit 1
 fi
 
-# メッセージ内の改行とダブルクォートをエスケープ
-ESCAPED_MESSAGE=$(echo "$MESSAGE" | sed 's/"/\\"/g' | awk '{printf "%s\\n", $0}' | sed 's/\\n$//')
-
-# LINE Messaging API で送信
-RESPONSE=$(curl -s -X POST https://api.line.me/v2/bot/message/push \
-  -H "Content-Type: application/json" \
+# Node.jsでJSONを構築し、パイプでcurlに渡す（日本語・改行対応）
+RESPONSE=$(node -e "
+const msg = process.argv[1];
+const userId = process.argv[2];
+console.log(JSON.stringify({
+  to: userId,
+  messages: [{type: 'text', text: msg}]
+}));
+" "$MESSAGE" "$LINE_USER_ID" | curl -s -X POST https://api.line.me/v2/bot/message/push \
+  -H "Content-Type: application/json; charset=UTF-8" \
   -H "Authorization: Bearer $LINE_CHANNEL_TOKEN" \
-  -d "{
-    \"to\": \"$LINE_USER_ID\",
-    \"messages\": [{\"type\": \"text\", \"text\": \"$ESCAPED_MESSAGE\"}]
-  }")
+  --data-binary @-)
 
 # レスポンスチェック（sentMessagesが含まれていれば成功）
 if echo "$RESPONSE" | grep -q "sentMessages"; then
