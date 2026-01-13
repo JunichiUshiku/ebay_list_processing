@@ -407,7 +407,7 @@ https://www.ebay.com/sh/research?marketplace=EBAY-US
   &endDate={now}
   &categoryId=0
   &sellerCountry=SellerLocation%3A%3A%3AJP
-  &offset=0&limit=50&tabName=SOLD&tz=Asia%2FTokyo
+  &offset=0&limit=50&sorting=-avgsalesprice&tabName=SOLD&tz=Asia%2FTokyo
 ```
 
 **重要**: 構築したURLを保持（HYPERLINK用に再利用）
@@ -454,7 +454,7 @@ https://www.ebay.com/sh/research?marketplace=EBAY-US
   &endDate={now}
   &categoryId=0
   &sellerCountry=SellerLocation%3A%3A%3AJP
-  &offset=0&limit=50&tabName=SOLD&tz=Asia%2FTokyo
+  &offset=0&limit=50&sorting=-avgsalesprice&tabName=SOLD&tz=Asia%2FTokyo
 ```
 
 再ナビゲート → 結果取得

@@ -47,13 +47,13 @@
 ### 90日間URL
 
 ```
-https://www.ebay.com/sh/research?marketplace=EBAY-US&keywords={キーワード（URLエンコード）}&dayRange=90&startDate={start}&endDate={now}&categoryId=0&sellerCountry=SellerLocation%3A%3A%3AJP&offset=0&limit=50&tabName=SOLD&tz=Asia%2FTokyo
+https://www.ebay.com/sh/research?marketplace=EBAY-US&keywords={キーワード（URLエンコード）}&dayRange=90&startDate={start}&endDate={now}&categoryId=0&sellerCountry=SellerLocation%3A%3A%3AJP&offset=0&limit=50&sorting=-avgsalesprice&tabName=SOLD&tz=Asia%2FTokyo
 ```
 
 ### 6ヶ月間URL
 
 ```
-https://www.ebay.com/sh/research?marketplace=EBAY-US&keywords={キーワード（URLエンコード）}&dayRange=180&startDate={start}&endDate={now}&categoryId=0&sellerCountry=SellerLocation%3A%3A%3AJP&offset=0&limit=50&tabName=SOLD&tz=Asia%2FTokyo
+https://www.ebay.com/sh/research?marketplace=EBAY-US&keywords={キーワード（URLエンコード）}&dayRange=180&startDate={start}&endDate={now}&categoryId=0&sellerCountry=SellerLocation%3A%3A%3AJP&offset=0&limit=50&sorting=-avgsalesprice&tabName=SOLD&tz=Asia%2FTokyo
 ```
 
 **重要**: 構築したURLを保持（HYPERLINK作成用に再利用）
