@@ -42,26 +42,35 @@ model: sonnet
 
 ## 返却JSONスキーマ（固定）
 
+**⚠️ SKILL.mdと統一されたスキーマ** - メインエージェントでの統合処理に必須
+
 ```json
 {
   "success": true,
-  "input": {
-    "keyword": "検索キーワード",
-    "reference_image": "images/Target-Product/405912557904.jpg",
-    "target_price": 10000,
-    "notes": "新品優先、箱なし不可"
-  },
+  "source": "mercari",
   "matches": [
     {
       "url": "https://jp.mercari.com/item/m12345678",
-      "price": "¥8,500",
       "price_value": 8500,
-      "title": "商品名",
+      "price_total": 8500,
+      "shipping_included": true,
       "condition": "未使用に近い",
+      "condition_group": "used",
       "confidence": "high",
-      "notes_evaluation": "新品・未使用、外箱あり"
+      "accessory_status": "complete"
     }
   ],
+  "best_candidate": {
+    "url": "https://jp.mercari.com/item/m98765432",
+    "price_value": 12000,
+    "price_total": 12000,
+    "shipping_included": true,
+    "condition": "中古",
+    "condition_group": "used",
+    "confidence": "high",
+    "reason_code": "price_over",
+    "accessory_status": "missing"
+  },
   "checked_count": 10,
   "skipped_by_junk": 2,
   "filtered_by_price": 3,
@@ -73,11 +82,31 @@ model: sonnet
 
 | フィールド | 説明 |
 |-----------|------|
+| `source` | **必須** サイト識別子（固定値: `"mercari"`） |
+| `matches` | 条件を満たす候補リスト |
+| `matches[].price_value` | 表示価格（数値） |
+| `matches[].price_total` | 送料込み価格（メルカリは送料込みなので同値） |
+| `matches[].shipping_included` | 送料込みか（メルカリは常に `true`） |
 | `matches[].condition` | 商品の状態（詳細ページから取得） |
-| `matches[].confidence` | high / medium / low |
-| `matches[].notes_evaluation` | notesに対する評価（参考情報） |
+| `matches[].condition_group` | `"new"` / `"used"`（新品・未使用なら"new"、それ以外は"used"） |
+| `matches[].confidence` | `high` / `medium` / `low` |
+| `matches[].accessory_status` | `"complete"` / `"missing"` / `"unknown"`（付属品状態） |
+| `best_candidate` | 条件未達でも同一商品の最安値（参考情報、なければ `null`） |
+| `best_candidate.reason_code` | 条件未達の理由（`price_over` / `condition_mismatch`） |
+| `checked_count` | 検査した商品数 |
 | `skipped_by_junk` | ジャンク品としてスキップした件数 |
 | `filtered_by_price` | 価格超過でスキップした件数 |
+
+### condition_group 判定ルール
+
+| condition（商品の状態） | condition_group |
+|------------------------|-----------------|
+| 新品、未使用 | `"new"` |
+| 未使用に近い | `"used"` |
+| 目立った傷や汚れなし | `"used"` |
+| やや傷や汚れあり | `"used"` |
+| 傷や汚れあり | `"used"` |
+| 全体的に状態が悪い | `"used"` |
 
 ---
 
@@ -254,9 +283,17 @@ Read /tmp/mercari_resized_2.png
 
 | レベル | 条件 |
 |--------|------|
-| **high** | 型番・形状・色・付属品が完全一致 |
-| **medium** | 主要特徴は一致、細部に差異あり |
+| **high** | 型番・形状・色が一致（本体の同一性確定） |
+| **medium** | 主要特徴は一致するが確証不足 |
 | **low** | 同シリーズだが別モデルの可能性 |
+
+**accessory_status判定基準**:
+
+| 値 | 条件 |
+|----|------|
+| **complete** | 付属品が完全一致 |
+| **missing** | 付属品が不足（本体は同一モデル） |
+| **unknown** | 判定不能（デフォルト値・後方互換） |
 
 **notes評価（notes設定時）**:
 notesに記載された条件に対する評価を `notes_evaluation` に記載
@@ -271,31 +308,52 @@ rm /tmp/mercari_img_*.png /tmp/mercari_resized_*.png
 
 ### Step 5: JSON返却
 
-一致した商品の情報を固定スキーマで返却。
+一致した商品の情報を**統一スキーマ**で返却。
 
 ```json
 {
   "success": true,
-  "input": {
-    "keyword": "天元突破グレンラガン ヨーコ スペースルック",
-    "reference_image": "images/Target-Product/405912557904.jpg",
-    "target_price": 10000,
-    "notes": "新品優先"
-  },
+  "source": "mercari",
   "matches": [
     {
       "url": "https://jp.mercari.com/item/m50852225537",
-      "price": "¥8,999",
       "price_value": 8999,
-      "title": "天元突破グレンラガン ヨーコ スペースルックVer.",
+      "price_total": 8999,
+      "shipping_included": true,
       "condition": "未使用に近い",
+      "condition_group": "used",
       "confidence": "high",
-      "notes_evaluation": "箱未開封、新品同様"
+      "accessory_status": "complete"
     }
   ],
+  "best_candidate": null,
   "checked_count": 10,
   "skipped_by_junk": 2,
   "filtered_by_price": 3,
+  "error": null
+}
+```
+
+**best_candidateの記載例**（条件未達だが同一商品がある場合）:
+```json
+{
+  "success": true,
+  "source": "mercari",
+  "matches": [],
+  "best_candidate": {
+    "url": "https://jp.mercari.com/item/m12345678",
+    "price_value": 15000,
+    "price_total": 15000,
+    "shipping_included": true,
+    "condition": "目立った傷や汚れなし",
+    "condition_group": "used",
+    "confidence": "high",
+    "reason_code": "price_over",
+    "accessory_status": "missing"
+  },
+  "checked_count": 10,
+  "skipped_by_junk": 0,
+  "filtered_by_price": 5,
   "error": null
 }
 ```

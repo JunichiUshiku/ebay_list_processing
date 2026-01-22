@@ -29,15 +29,87 @@ description: eBay販売商品の国内仕入れ先検索ワークフロー。国
 **Spreadsheet ID**: `1pmbzGCHCqd0EiyuJBl6rfUEGXVITcBDMGPg9bQ67d-g`
 **Sheet名**: `AI作業用`
 
+### 入力列
+
 | 列 | 内容 | 用途 |
 |----|------|------|
 | B | 商品名 | 検索キーワード |
 | C | eBay Item Number | eBayページ確認 |
 | F | 仕入価格（円） | 空/0→スキップ |
 | P | コンディション | 新品/中古判定 |
-| U | 結果URL | 処理済み判定 |
-| V | その他候補URL | 最大5件 |
-| W | 備考 | 価格、状態、エラー等 |
+
+### 出力列
+
+| 列 | 内容 | 記載ルール |
+|----|------|-----------|
+| U | 結果URL | URL=仕入れ可能 / `なし`=仕入れ不可 / `スキップ`=検索対象外 |
+| V | その他候補URL | 最大5件、参考URLを含む |
+| W | 備考 | 日本語形式（下記参照） |
+
+### U列の記載パターン
+
+| 状態 | U列 | 説明 |
+|------|-----|------|
+| 条件合致 | **URL** | 仕入れ可能 |
+| 新品なし→中古代替 | **URL** | 許容範囲内の代替（仕入れ可能） |
+| 価格オーバー等 | `なし` | 検索したが条件不合致 |
+| 同一商品なし | `なし` | 11サイト検索したが見つからず |
+| エラー/スキップ | `スキップ` | 検索対象外 |
+
+### W列フォーマット仕様
+
+**形式**: 日本語で視認しやすい形式
+
+**サイト名表記**:
+| source値 | W列表記 |
+|----------|---------|
+| `mercari` | メルカリ |
+| `paypay` | PayPayフリマ |
+| `yahoo` | ヤフオク |
+| `amazon` | Amazon |
+| `rakuten` | 楽天 |
+
+**価格表記**: カンマ区切り + 「円」（例: `8,500円`）
+
+**記載パターン**:
+
+| 状態 | W列出力 | 説明 |
+|------|---------|------|
+| 条件合致 | `{サイト名} {価格}円 {コンディション}` | 仕入れ可能 |
+| 条件合致（付属品不足） | `{サイト名} {価格}円 {コンディション}（付属品不足）` | 付属品不足だが仕入れ可能 |
+| 新品なし→中古代替 | `{サイト名} {価格}円 {コンディション}（新品なし→中古許可）` | 許容範囲内 |
+| 複数注釈 | `{サイト名} {価格}円 {コンディション}（新品なし→中古許可・付属品不足）` | 複数条件の組み合わせ |
+| 価格超過 | `価格超過（{サイト名} {価格}円）` | 参考情報 |
+| 同一商品なし | `同一商品なし` | 11サイト検索したが見つからず |
+| eBayページエラー | `エラー（eBayページなし）` | ページ取得失敗 |
+
+**記載例**:
+```
+# 条件合致
+メルカリ 8,500円 傷や汚れあり
+
+# 条件合致（付属品不足）
+メルカリ 8,500円 中古（付属品不足）
+
+# 新品なし→中古代替（許容範囲内）
+メルカリ 9,800円 中古（新品なし→中古許可）
+
+# 複数注釈の組み合わせ
+メルカリ 9,800円 中古（新品なし→中古許可・付属品不足）
+
+# 価格オーバー（参考情報）
+価格超過（ヤフオク 12,000円）
+
+# 同一商品なし
+同一商品なし
+
+# eBayページエラー
+エラー（eBayページなし）
+```
+
+**注釈連結ルール**:
+- 複数の注釈がある場合は括弧内を `・` で連結
+- 例: `（新品なし→中古許可・付属品不足）`
 
 ---
 
@@ -120,7 +192,7 @@ lastRow = max(行番号 where C列 ≠ 空)
 |------|------|------|
 | 正常 | `isError: false`, `isEnded: false` | 画像保存 → Step 5へ |
 | ENDED | `isEnded: true` | 画像保存 → Step 5へ |
-| エラー | `isError: true` or `title: null` | W列に「ページなし」→ スキップ |
+| エラー | `isError: true` or `title: null` | U列=`スキップ`、W列=`エラー（eBayページなし）` → 次の行へ |
 
 
 ### Step 5: 検索キーワード確定
@@ -134,9 +206,8 @@ Taskツールで仕入れ先検索サブエージェントを**並列実行**:
 ```
 // 1メッセージで複数Taskを呼び出し → 並列実行
 Task: mercari-matcher (prompt: ...)
-Task: yahoo-auction-matcher (prompt: ...)  // 将来追加
-Task: amazon-matcher (prompt: ...)         // 将来追加
-...
+Task: paypay-matcher (prompt: ...)
+// 将来追加予定: yahoo-auction-matcher, amazon-matcher, etc.
 ```
 
 **共通パラメータ**:
@@ -149,6 +220,7 @@ Task: amazon-matcher (prompt: ...)         // 将来追加
 
 **現在有効なサブエージェント**:
 - `mercari-matcher` → `.claude/agents/mercari-matcher.md`
+- `paypay-matcher` → `.claude/agents/paypay-matcher.md`
 
 **返却JSONスキーマ（共通）**:
 各サブエージェントは同一スキーマで返却 → メインエージェントで統一処理
@@ -156,27 +228,68 @@ Task: amazon-matcher (prompt: ...)         // 将来追加
 ```json
 {
   "success": true,
+  "source": "mercari",
   "matches": [
     {
       "url": "https://...",
       "price_value": 8500,
+      "price_total": 8500,
+      "shipping_included": true,
       "condition": "未使用に近い",
-      "confidence": "high"
+      "condition_group": "used",
+      "confidence": "high",
+      "accessory_status": "complete"
     }
-  ]
+  ],
+  "best_candidate": {
+    "url": "https://...",
+    "price_value": 12000,
+    "price_total": 13300,
+    "shipping_included": false,
+    "condition": "中古",
+    "condition_group": "used",
+    "confidence": "high",
+    "reason_code": "price_over",
+    "accessory_status": "missing"
+  }
 }
+```
+
+**フィールド説明**:
+| フィールド | 説明 |
+|-----------|------|
+| `source` | サイト名 |
+| `matches` | 条件を満たす候補リスト |
+| `best_candidate` | 条件未達でも同一商品の最安値（参考情報） |
+| `price_value` | 表示価格 |
+| `price_total` | 送料込み価格（送料不明時は+1300円） |
+| `shipping_included` | 送料込みかどうか |
+| `condition_group` | `new` / `used` |
+| `accessory_status` | 付属品状態（`complete` / `missing` / `unknown`） |
+| `reason_code` | 条件未達の理由（best_candidate用） |
 ```
 
 ### Step 7: 仕入れ判断（結果統合）
 
 全サブエージェントの返却JSONから最適な仕入れ先を選定:
 
+**7-1. matchesから条件合致候補を選定**:
 1. 各サブエージェントの `matches` を収集
 2. 以下の優先順位で1件を採用:
    - `confidence: high` を優先
-   - 同一confidenceなら `price_value` が低い方
+   - 同一confidenceなら `accessory_status: complete` を優先
+   - 同一条件なら `price_total` が低い方
    - [reference/conditions.md](reference/conditions.md) のルールに従い判断
 3. 採用されなかった候補はV列（その他候補）に記録
+4. `accessory_status` が `missing` の場合、W列に「付属品不足」を追記
+
+**7-2. matchesが空の場合**:
+1. 各サブエージェントの `best_candidate` を収集
+2. `price_total` が最も低いものを参考情報として採用
+3. U列=`なし`、V列=参考URL、W列=`価格超過（{サイト名} {価格}円）`
+
+**7-3. best_candidateも空の場合**:
+- U列=`なし`、W列=`同一商品なし`
 
 ### Step 8: 結果記録
 
@@ -185,8 +298,18 @@ mcp__google-sheets__update_cells
 spreadsheet_id: 1pmbzGCHCqd0EiyuJBl6rfUEGXVITcBDMGPg9bQ67d-g
 sheet: AI作業用
 range: U{行}:W{行}
-data: [[ベストURL or「なし」, 候補URL, 備考]]
+data: [[U列値, V列値, W列値]]
 ```
+
+**記録パターン**:
+
+| 状態 | U列 | V列 | W列 |
+|------|-----|-----|-----|
+| 条件合致 | ベストURL | 他候補URL | `メルカリ 8,500円 傷や汚れあり` |
+| 新品なし→中古代替 | 代替URL | 他候補URL | `メルカリ 9,800円 中古（新品なし→中古許可）` |
+| 価格オーバー等 | `なし` | 参考URL | `価格超過（ヤフオク 12,000円）` |
+| 同一商品なし | `なし` | （空） | `同一商品なし` |
+| eBayページエラー | `スキップ` | （空） | `エラー（eBayページなし）` |
 
 ### Step 9: 後処理（行ごと）
 
