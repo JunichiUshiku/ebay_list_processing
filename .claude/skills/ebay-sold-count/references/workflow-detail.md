@@ -4,7 +4,9 @@
 
 1. [参照ファイル読み込み](#step-1-参照ファイル読み込み)
 2. [データ取得・処理対象特定](#step-2-データ取得処理対象特定)
-3. [5タブ作成 + eBayナビゲート](#step-3-5タブ作成--ebayナビゲート)
+3. [処理モード分岐](#step-3-処理モード分岐)
+   - 3-S: シングルモード（5件以下）
+   - 3-P: パラレルモード（6件以上）
 4. [並列処理で販売数調査](#step-4-並列処理で販売数調査)
 5. [結果をスプレッドシートに記録](#step-5-結果をスプレッドシートに記録)
 6. [LINE通知送信](#step-6-line通知送信)
@@ -16,17 +18,35 @@
 
 このチェックリストをコピーして進行状況を追跡：
 
+### シングルモード（5件以下）
+
 ```
-処理進捗：
+処理進捗（シングルモード）：
 - [ ] Step 0: skill-state.json作成
 - [ ] Step 1: 参照ファイル読み込み
 - [ ] Step 2: データ取得・処理対象特定（total: ___件）
-- [ ] Step 3: 5タブ作成 + eBayナビゲート
+- [ ] Step 3-S: 5タブ作成 + eBayナビゲート
 - [ ] Step 4-5: バッチ処理
   - [ ] バッチ1 (行___-___): 検索 → 書き込み → 進捗更新
-  - [ ] バッチ2 (行___-___): 検索 → 書き込み → 進捗更新
-  - [ ] バッチ3 (行___-___): 検索 → 書き込み → 進捗更新
-  - [ ] ... (必要に応じて追加)
+- [ ] Step 6: LINE通知送信
+- [ ] Step 7: サマリー報告
+- [ ] Step 8: skill-state.json削除（正常完了時のみ）
+```
+
+### パラレルモード（6件以上）
+
+```
+処理進捗（パラレルモード）：
+- [ ] Step 0: skill-state.json作成
+- [ ] Step 1: 参照ファイル読み込み（+ parallel-processing.md）
+- [ ] Step 2: データ取得・処理対象特定（total: ___件）
+- [ ] Step 3-P: サブエージェント準備
+  - [ ] エージェント数計算: ___エージェント
+  - [ ] アイテム分割
+  - [ ] C列取得（item_to_row_map作成）
+  - [ ] タイムスタンプ取得
+  - [ ] Taskツールでサブエージェント並列起動（タブ作成はサブ側で実行）
+- [ ] Step 4-P: 結果統合
 - [ ] Step 6: LINE通知送信
 - [ ] Step 7: サマリー報告
 - [ ] Step 8: skill-state.json削除（正常完了時のみ）
@@ -270,16 +290,33 @@ WARNING: 1,250件の処理対象があります。
 
 ---
 
-## Step 3: 5タブ作成 + eBayナビゲート
+## Step 3: 処理モード分岐（必須判定）
 
-### 3-1: タブ作成
+**⚠️ CRITICAL**: Step 2で確定した total 件数に基づいて**必ず**処理モードを判定すること
+
+```javascript
+if (total <= 5) {
+  // シングルモード → Step 3-S へ
+} else {
+  // パラレルモード → Step 3-P へ
+  // ⚠️ 6件以上は必ずTaskツールでサブエージェント起動（SKILL.md CRITICAL RULE 3）
+}
+```
+
+**禁止**: 6件以上をメインエージェントが自分で処理することは禁止されています。
+
+---
+
+## Step 3-S: シングルモード（5件以下）
+
+### 3-S-1: タブ作成
 
 ```
 mcp__claude-in-chrome__tabs_context_mcp（初回のみ）
 mcp__claude-in-chrome__tabs_create_mcp × 5回
 ```
 
-### 3-2: eBayへナビゲート（必須）
+### 3-S-2: eBayへナビゲート（必須）
 
 **重要**: 新規タブは `chrome://newtab/` 状態でJavaScript実行不可
 
@@ -291,7 +328,7 @@ url: https://www.ebay.com
 
 ※ 5タブ並列でナビゲート実行
 
-### 3-3: タイムスタンプ取得
+### 3-S-3: タイムスタンプ取得
 
 ナビゲート完了後、いずれかのタブでタイムスタンプを取得:
 
@@ -304,6 +341,195 @@ url: https://www.ebay.com
 ```
 
 ※ 数値のみなのでMCPセキュリティでブロックされない
+
+→ Step 4 へ進む
+
+---
+
+## Step 3-P: パラレルモード（6件以上）
+
+**詳細**: [parallel-processing.md](parallel-processing.md)
+
+### 3-P-1: エージェント数計算
+
+```javascript
+const agentCount = Math.min(Math.ceil(total / 5), 5);
+```
+
+| 処理件数 | エージェント数 |
+|---------|--------------|
+| 6-10件 | 2 |
+| 11-15件 | 3 |
+| 16-20件 | 4 |
+| 21件以上 | 5 |
+
+### 3-P-2: アイテム分割
+
+```javascript
+function divideItems(items, agentCount) {
+  const result = [];
+  const baseSize = Math.floor(items.length / agentCount);
+  const extra = items.length % agentCount;
+
+  let start = 0;
+  for (let i = 0; i < agentCount; i++) {
+    const size = baseSize + (i < extra ? 1 : 0);
+    result.push(items.slice(start, start + size));
+    start += size;
+  }
+  return result;
+}
+```
+
+### 3-P-3: C列取得とマップ作成
+
+```
+mcp__google-sheets__get_sheet_data
+spreadsheet_id: 1pmbzGCHCqd0EiyuJBl6rfUEGXVITcBDMGPg9bQ67d-g
+sheet: AI作業用
+range: C:C
+```
+
+```javascript
+const itemToRowMap = {};
+columnC.forEach((item, index) => {
+  if (item?.trim()) {
+    itemToRowMap[item.trim()] = index + 1;
+  }
+});
+```
+
+### 3-P-4: タイムスタンプ取得
+
+**注意**: タブ作成はサブエージェント側で実行（各サブエージェントが自分で5タブを作成）
+
+```javascript
+(function() {
+  const now = Date.now();
+  const start_90d = now - (90 * 24 * 60 * 60 * 1000);
+  const start_180d = now - (180 * 24 * 60 * 60 * 1000);
+  return JSON.stringify({now, start_90d, start_180d});
+})()
+```
+
+### 3-P-5: skill-state.json更新（パラレルモード）
+
+```bash
+cat > ~/.claude/skill-state.json << EOF
+{
+  "skill": "ebay-sold-count",
+  "mode": "parallel",
+  "target_rows": ${TARGET_ROWS_JSON},
+  "cursor": 0,
+  "total": ${total},
+  "agent_count": ${agentCount},
+  "message": "並列処理モード: ${agentCount}エージェント起動中"
+}
+EOF
+```
+
+### 3-P-6: Taskツールでサブエージェント並列起動（必須）
+
+**⚠️ CRITICAL - 以下は必須事項です**:
+
+1. **Taskツール使用必須**: メインエージェントが自分で処理を続行することは**禁止**
+2. **全エージェントを単一メッセージで並列起動**: 複数のTaskツール呼び出しを1つのレスポンスで送信
+3. **subagent_type**: `"general-purpose"` を使用（全MCPツールにアクセス可能）
+4. **タブ作成はサブエージェント側**: メイン側でタブ作成・配分は不要
+
+**禁止事項**:
+- ❌ メインエージェントが6件以上を自分でループ処理
+- ❌ サブエージェントを1つずつ順番に起動
+- ❌ Taskツールを使わずにブラウザ操作を継続
+- ❌ メインエージェントでタブを作成してサブエージェントに渡す
+
+```
+# 例: 2エージェント並列起動（必ずこの形式で実行）
+# ※ タブIDは渡さない（サブエージェント側で作成）
+Task(
+  description: "エージェント1: 5件リサーチ",
+  prompt: `
+    ebay-sold-count-worker サブエージェントとして実行。
+
+    ## 入力パラメータ
+    agent_id: 1
+    assigned_items: ["item1", "item2", "item3", "item4", "item5"]
+    item_to_row_map: {"item1": 33, "item2": 45, "item3": 52, "item4": 61, "item5": 78}
+    timestamps: {"now": 1704557000000, "start_90d": 1696781000000, "start_180d": 1689005000000}
+
+    ## 実行手順
+    1. .claude/agents/ebay-sold-count-worker.md を読み込む
+    2. 指示に従って処理を実行
+    3. 結果JSONを返却
+  `,
+  subagent_type: "general-purpose"
+)
+
+Task(
+  description: "エージェント2: 5件リサーチ",
+  prompt: `
+    ebay-sold-count-worker サブエージェントとして実行。
+
+    ## 入力パラメータ
+    agent_id: 2
+    assigned_items: ["item6", "item7", "item8", "item9", "item10"]
+    item_to_row_map: {"item6": 85, "item7": 92, "item8": 101, "item9": 115, "item10": 123}
+    timestamps: {"now": 1704557000000, "start_90d": 1696781000000, "start_180d": 1689005000000}
+
+    ## 実行手順
+    1. .claude/agents/ebay-sold-count-worker.md を読み込む
+    2. 指示に従って処理を実行
+    3. 結果JSONを返却
+  `,
+  subagent_type: "general-purpose"
+)
+```
+
+→ Step 4-P: 結果統合 へ進む
+
+---
+
+## Step 4-P: 結果統合（パラレルモード）
+
+全サブエージェントの結果を統合：
+
+```javascript
+const allResults = [agent1Result, agent2Result, ...];
+
+const summary = {
+  total: 0,
+  success: 0,
+  error: 0,
+  six_month_searched: 0
+};
+
+const processedItems = [];
+
+for (const result of allResults) {
+  if (result.success) {
+    summary.total += result.summary.total;
+    summary.success += result.summary.success;
+    summary.error += result.summary.error;
+    summary.six_month_searched += result.summary.six_month_searched;
+    processedItems.push(...result.processed);
+  } else {
+    // エージェント失敗の場合
+    summary.error += result.summary?.total || 0;
+    if (result.processed) {
+      processedItems.push(...result.processed);
+    }
+  }
+}
+```
+
+### エラーハンドリング
+
+| 状況 | 対応 |
+|------|------|
+| 一部エージェント成功 | 成功分を統合、失敗分はエラー記録 |
+| 全エージェント失敗 | シングルモードでリトライを検討 |
+
+→ Step 6: LINE通知送信 へ進む
 
 ---
 

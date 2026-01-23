@@ -1,9 +1,9 @@
 ---
 name: ebay-sold-count
-description: eBay販売履歴件数調査ワークフロー（並列処理版）。スプレッドシートのE列eBay検索URLからキーワードを抽出し、eBay Seller Hub Product Researchで90日間の販売件数を調べてX列に記録。「販売件数を調べて」「sold count」「リサーチ」で全件処理。アイテムナンバー指定時はC列から検索。
+description: eBay販売履歴件数調査ワークフロー（サブエージェント並列処理版）。スプレッドシートのE列eBay検索URLからキーワードを抽出し、eBay Seller Hub Product Researchで90日間の販売件数を調べてX列に記録。「販売件数を調べて」「sold count」「リサーチ」で全件処理。アイテムナンバー指定時はC列から検索。6件以上はサブエージェント並列起動で高速化。
 ---
 
-# eBay販売件数調査（並列処理版）
+# eBay販売件数調査（サブエージェント並列処理版）
 
 ## CRITICAL RULES
 
@@ -11,19 +11,56 @@ description: eBay販売履歴件数調査ワークフロー（並列処理版）
    - `references/selectors.md` - URL構築・DOM操作・タイムスタンプ取得
    - `references/workflow-detail.md` - 詳細手順・進捗管理・バッチ処理
    - `references/error-handling.md` - エラー検出・リトライ・通知
+   - `references/parallel-processing.md` - 並列処理仕様（6件以上の場合）
 
-2. **即時書き込み必須**: 5件バッチ完了後、次のバッチ前に必ずスプレッドシート書き込み
+2. **処理モード判定必須**: 処理対象件数により自動判定
+   - 5件以下: シングルモード（従来通り）
+   - 6件以上: パラレルモード（サブエージェント並列）
+
+3. **⚠️ 6件以上は必ずTaskツールでサブエージェント起動**:
+   - **禁止**: メインエージェントが自分で全件処理すること
+   - **必須**: Taskツールで `subagent_type: "general-purpose"` を使用し、並列起動
+   - 詳細: workflow-detail.md Step 3-P-7 参照
+
+4. **即時書き込み必須**: 5件バッチ完了後、次のバッチ前に必ずスプレッドシート書き込み
    - 理由: オートコンパクト時のデータ損失防止
    - 詳細: workflow-detail.md 参照
 
-3. **進捗記録必須**: 各バッチ書き込み後に skill-state.json 更新
+5. **進捗記録必須**: 各バッチ書き込み後に skill-state.json 更新
    - 詳細: workflow-detail.md Step 5.5 参照
+
+---
+
+## 処理モード判定
+
+| 条件 | モード | 説明 |
+|------|--------|------|
+| total <= 5 | シングル | メインエージェントが5タブで処理 |
+| total > 5 | パラレル | サブエージェント並列起動（最大5エージェント） |
+
+### エージェント数計算
+
+```javascript
+const agentCount = Math.min(Math.ceil(total / 5), 5);
+```
+
+| 処理件数 | エージェント数 |
+|---------|--------------|
+| 1-5件 | シングルモード |
+| 6-10件 | 2 |
+| 11-15件 | 3 |
+| 16-20件 | 4 |
+| 21件以上 | 5 |
+
+詳細: [references/parallel-processing.md](references/parallel-processing.md)
 
 ---
 
 ## ワークフロー
 
 TodoWriteで以下を登録し進捗追跡:
+
+### シングルモード（5件以下）
 
 - [ ] **Step 0: skill-state.json作成**（必須・最初に実行）
 - [ ] 参照ファイル読み込み（selectors.md, workflow-detail.md, error-handling.md）
@@ -34,7 +71,24 @@ TodoWriteで以下を登録し進捗追跡:
 - [ ] サマリー報告
 - [ ] **Step 8: skill-state.json削除**（正常完了時のみ）
 
+### パラレルモード（6件以上）
+
+- [ ] **Step 0: skill-state.json作成**（必須・最初に実行）
+- [ ] 参照ファイル読み込み（+ parallel-processing.md）
+- [ ] データ取得・処理対象特定（total件数を確定）
+- [ ] **Step 3-P: サブエージェント準備**
+  - [ ] エージェント数計算・アイテム分割
+  - [ ] C列取得（item_to_row_map作成）
+  - [ ] タブ作成（エージェント数 × 5タブ）
+  - [ ] タイムスタンプ取得
+  - [ ] Taskツールでサブエージェント並列起動
+- [ ] **Step 4-P: 結果統合**
+- [ ] LINE通知送信
+- [ ] サマリー報告
+- [ ] **Step 8: skill-state.json削除**（正常完了時のみ）
+
 **詳細手順**: [references/workflow-detail.md](references/workflow-detail.md)
+**並列処理仕様**: [references/parallel-processing.md](references/parallel-processing.md)
 
 ---
 
@@ -123,6 +177,13 @@ TodoWriteで以下を登録し進捗追跡:
 | [references/selectors.md](references/selectors.md) | タイムスタンプ取得、URL構築、DOMセレクター |
 | [references/workflow-detail.md](references/workflow-detail.md) | 各ステップの詳細手順 |
 | [references/error-handling.md](references/error-handling.md) | エラー検出・リトライ戦略 |
+| [references/parallel-processing.md](references/parallel-processing.md) | サブエージェント並列処理仕様 |
+
+## サブエージェント定義
+
+| ファイル | 内容 |
+|----------|------|
+| [.claude/agents/ebay-sold-count-worker.md](../../agents/ebay-sold-count-worker.md) | サブエージェント定義 |
 
 ---
 
