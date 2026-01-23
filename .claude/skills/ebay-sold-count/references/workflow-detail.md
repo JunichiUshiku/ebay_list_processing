@@ -101,12 +101,17 @@ range: X1:Y1
 
 ヘッダーが空の場合:
 ```
-mcp__google-sheets__update_cells
+mcp__google-sheets__batch_update_cells
 spreadsheet_id: 1pmbzGCHCqd0EiyuJBl6rfUEGXVITcBDMGPg9bQ67d-g
 sheet: AI作業用
-range: X1:Y1
-data: [["販売数（90日間）", "販売数（6ヶ月間）"]]
+ranges: {
+  "X1": [["販売数（90日間）"]],
+  "Y1": [["販売数（6ヶ月間）"]]
+}
 ```
+
+**注意**: `update_cells`で範囲指定（X1:Y1）すると、X1に書き込まれない問題が確認されています。
+`batch_update_cells`で個別セル指定を使用してください。
 
 ### MCPツール表記について
 
