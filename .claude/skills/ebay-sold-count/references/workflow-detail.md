@@ -489,6 +489,116 @@ Task(
 
 ---
 
+## Step 3-P-7: サブエージェント起動失敗時のリトライ
+
+### リトライポリシー
+
+| 状況 | 対応 |
+|------|------|
+| 一部エージェント起動失敗 | 失敗分のみ再起動（最大3回） |
+| 3回リトライ後も失敗 | メインエージェントがその分を担当 |
+| 全エージェント起動失敗 | メインエージェントが全件処理 |
+
+### リトライフロー
+
+```javascript
+const MAX_RETRIES = 3;
+const failedAgents = [];  // 起動失敗したエージェント情報
+
+// Step 1: 全エージェント並列起動
+const results = await launchAllAgents(agentConfigs);
+
+// Step 2: 失敗エージェントを特定
+for (const result of results) {
+  if (!result.success && result.error?.includes("起動失敗")) {
+    failedAgents.push({
+      agent_id: result.agent_id,
+      assigned_items: result.assigned_items,
+      retryCount: 0
+    });
+  }
+}
+
+// Step 3: 失敗分をリトライ（最大3回）
+while (failedAgents.length > 0) {
+  const agent = failedAgents[0];
+  agent.retryCount++;
+
+  if (agent.retryCount > MAX_RETRIES) {
+    // 3回失敗 → メインエージェントが担当
+    console.log(`Agent ${agent.agent_id} 起動失敗（3回）→ メインで処理`);
+    mainAgentQueue.push(...agent.assigned_items);
+    failedAgents.shift();
+    continue;
+  }
+
+  // リトライ起動
+  const retryResult = await launchSingleAgent(agent);
+  if (retryResult.success) {
+    failedAgents.shift();  // 成功したら削除
+  }
+}
+
+// Step 4: メインエージェントで残り処理
+if (mainAgentQueue.length > 0) {
+  await processItemsAsMain(mainAgentQueue);
+}
+```
+
+### 実装例（Taskツール呼び出し）
+
+```
+# 初回起動
+Task(agent1), Task(agent2), Task(agent3)
+
+# 結果確認後、agent2が起動失敗の場合
+# → agent2のみ再起動（リトライ1回目）
+Task(agent2_retry1)
+
+# まだ失敗の場合
+# → agent2のみ再起動（リトライ2回目）
+Task(agent2_retry2)
+
+# まだ失敗の場合
+# → agent2のみ再起動（リトライ3回目）
+Task(agent2_retry3)
+
+# 3回失敗 → メインエージェントが agent2 の担当分を処理
+# Step 3-S の手順でシングルモード処理を実行
+```
+
+### メインエージェントによるフォールバック処理
+
+3回リトライ後も起動失敗したエージェントの担当分は、メインエージェントが以下の手順で処理：
+
+1. 失敗エージェントの `assigned_items` を取得
+2. Step 3-S の手順でタブを作成（既存タブがあれば再利用）
+3. Step 4 の手順で通常処理
+4. 結果を他のサブエージェント結果と統合
+
+```javascript
+// フォールバック処理
+async function processFailedAgentItems(failedItems, itemToRowMap, timestamps) {
+  // 1. タブ作成（5タブ）
+  const tabIds = await createTabs(5);
+  await navigateToEbay(tabIds);
+
+  // 2. 通常のシングルモード処理
+  const results = [];
+  for (const item of failedItems) {
+    const result = await processItem(item, itemToRowMap[item], timestamps, tabIds);
+    results.push(result);
+
+    // 即時書き込み
+    await writeToSpreadsheet(result);
+  }
+
+  return results;
+}
+```
+
+---
+
 ## Step 4-P: 結果統合（パラレルモード）
 
 全サブエージェントの結果を統合：
