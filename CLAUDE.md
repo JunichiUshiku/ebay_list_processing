@@ -50,6 +50,49 @@ skill: "ebay-sold-count"
 
 これにより、SKILL.mdに定義されたeBay Product Research検索と販売件数記録のワークフローが確実に実行される。
 
+## ブラウザ操作の優先順位
+
+ブラウザを使用する際は、以下の優先順位で選択すること：
+
+### 1. agent-browser（優先）
+
+```bash
+agent-browser open <url>
+agent-browser snapshot -i
+agent-browser click @e1
+```
+
+**利点**:
+- コンパクトな出力（ref付きで操作しやすい）
+- `--profile` オプションで認証状態を永続化可能
+- `--session` オプションで並列セッション管理可能
+
+### 2. Claude in Chrome（フォールバック）
+
+以下の場合にのみ Claude in Chrome を使用：
+
+- agent-browser でページが正常に読み込めない場合
+- 複雑なJavaScript操作が必要な場合
+- リアルタイムのDOM監視が必要な場合
+- agent-browser がインストールされていない環境
+
+```
+mcp__claude-in-chrome__navigate
+mcp__claude-in-chrome__read_page
+mcp__claude-in-chrome__computer
+```
+
+### 3. Playwright MCP（特殊用途）
+
+テスト自動化や特殊なブラウザ制御が必要な場合：
+
+```
+mcp__playwright__browser_navigate
+mcp__playwright__browser_snapshot
+```
+
+---
+
 ## Claude in Chrome MCP セキュリティ制限
 
 Claude in Chrome MCPは、セキュリティ対策として以下のデータをJavaScript実行結果（javascript_tool）として返すことをブロックする：

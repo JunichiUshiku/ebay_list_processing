@@ -118,6 +118,32 @@ agent-browser state load auth.json
 agent-browser open https://app.example.com/dashboard
 ```
 
+## Profile (persistent login)
+
+Use `--profile` to persist cookies, localStorage, and login state across browser restarts.
+
+```bash
+# First time: login manually with --headed
+agent-browser --profile ~/.agent-browser-profiles/ebay open "https://signin.ebay.com/signin/" --headed
+# After manual login, close to save
+agent-browser close
+
+# Later sessions: login state is preserved
+agent-browser --profile ~/.agent-browser-profiles/ebay open "https://www.ebay.com/"
+```
+
+### Pre-configured profiles
+
+| Site | Profile Path |
+|------|-------------|
+| eBay | ~/.agent-browser-profiles/ebay |
+| ラクマ | ~/.agent-browser-profiles/rakuma |
+| 駿河屋 | ~/.agent-browser-profiles/surugaya |
+| ハードオフ | ~/.agent-browser-profiles/hardoff |
+| PayPayフリマ | ~/.agent-browser-profiles/paypay |
+
+**Note**: Close existing browser first with `agent-browser close` before using `--profile`.
+
 ## Sessions (parallel browsers)
 
 ```bash

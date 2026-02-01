@@ -66,6 +66,9 @@ description: eBay販売商品の国内仕入れ先検索ワークフロー。国
 | `mercari` | メルカリ |
 | `paypay` | PayPayフリマ |
 | `yahoo` | ヤフオク |
+| `rakuma` | ラクマ |
+| `hardoff` | ハードオフ |
+| `surugaya` | 駿河屋 |
 | `amazon` | Amazon |
 | `rakuten` | 楽天 |
 
@@ -207,7 +210,10 @@ Taskツールで仕入れ先検索サブエージェントを**並列実行**:
 // 1メッセージで複数Taskを呼び出し → 並列実行
 Task: mercari-matcher (prompt: ...)
 Task: paypay-matcher (prompt: ...)
-// 将来追加予定: yahoo-auction-matcher, amazon-matcher, etc.
+Task: rakuma-matcher (prompt: ...)
+Task: yahoo-auction-matcher (prompt: ...)
+Task: hardoff-matcher (prompt: ...)
+Task: surugaya-matcher (prompt: ...)
 ```
 
 **共通パラメータ**:
@@ -218,9 +224,13 @@ Task: paypay-matcher (prompt: ...)
 | target_price | F列 | 50000 |
 | notes | P列 | "中古" |
 
-**現在有効なサブエージェント**:
+**現在有効なサブエージェント（6サイト）**:
 - `mercari-matcher` → `.claude/agents/mercari-matcher.md`
 - `paypay-matcher` → `.claude/agents/paypay-matcher.md`
+- `rakuma-matcher` → `.claude/agents/rakuma-matcher.md`
+- `yahoo-auction-matcher` → `.claude/agents/yahoo-auction-matcher.md`
+- `hardoff-matcher` → `.claude/agents/hardoff-matcher.md`
+- `surugaya-matcher` → `.claude/agents/surugaya-matcher.md`
 
 **返却JSONスキーマ（共通）**:
 各サブエージェントは同一スキーマで返却 → メインエージェントで統一処理
