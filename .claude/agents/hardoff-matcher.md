@@ -11,7 +11,7 @@ description: |
   - 「ハードオフで〇〇と同じ商品を検索」
   - 「hardoff match」
   - 「オフモール照合」
-tools: Read, Bash, Glob
+tools: Bash
 model: sonnet
 ---
 
@@ -117,6 +117,11 @@ Step 0: 初期化
 Step 1: ハードオフ検索
     │
     ▼
+Step 1.5: 0件チェック
+    │
+    ├─ 0件検出 → 次のキーワードへ（全キーワード試行後も0件: matches: [], best_candidate: null）
+    │
+    ▼
 Step 2: 価格フィルター適用（target_price設定時）
     │
     ▼
@@ -139,11 +144,8 @@ Step 6: JSON返却
 ### Step 0: 初期化
 
 ```bash
-# 参照画像の存在確認
-ls {reference_image}
-
-# 参照画像を読み込み（Vision比較用）
-Read {reference_image}
+# 参照画像の存在確認（Readは使用しない）
+test -f "{reference_image}" || { echo '{"error": "参照画像が見つかりません", "same_product": false, "confidence": "low"}'; exit 1; }
 ```
 
 - reference_image: 必須パラメータ、存在しない場合はエラー終了
@@ -156,16 +158,26 @@ Read {reference_image}
 
 ```bash
 agent-browser --session hardoff open "https://netmall.hardoff.co.jp/"
-sleep 3
+agent-browser --session hardoff wait --fn "!!document.querySelector('input[type=\"search\"], input[name=\"q\"]')"
 agent-browser --session hardoff snapshot -i
 agent-browser --session hardoff fill @e5 "{keyword}"
 agent-browser --session hardoff press Enter
-sleep 3
+agent-browser --session hardoff wait --fn "document.querySelectorAll('a[href*=\"/product/\"]').length > 0 || document.body.innerText.includes('見つかりませんでした')"
 ```
 
 **重要**:
 - 検索ボックスは `textbox "全国の1点ものを探そう"` で特定
 - 検索結果URL形式: `/search/?q={keyword}&s=7`
+
+---
+
+### Step 1.5: 0件チェック
+
+```bash
+zero=$(agent-browser --session hardoff snapshot -c | grep "見つかりませんでした")
+# 出力あり → 0件確定、次のキーワードへ
+# 出力なし → Step 2（価格フィルター）へ続行
+```
 
 ---
 
@@ -175,14 +187,14 @@ sleep 3
 agent-browser --session hardoff snapshot -i
 # 価格ボタンをクリック（通常 "価格" というテキストで特定）
 agent-browser --session hardoff click @価格ボタンref
-sleep 1
+agent-browser --session hardoff wait 500
 
 agent-browser --session hardoff snapshot -i
 # 上限入力フィールドに価格を入力（textbox "上限なし"）
 agent-browser --session hardoff fill @上限入力ref "{target_price}"
 # 検索するボタンをクリック
 agent-browser --session hardoff click @検索ボタンref
-sleep 3
+agent-browser --session hardoff wait --fn "document.querySelectorAll('a[href*=\"/product/\"]').length > 0 || document.body.innerText.includes('見つかりませんでした')"
 ```
 
 **フィルター後URL形式**: `/search/?q={keyword}&s=7&p=-{max_price}`
@@ -219,7 +231,7 @@ isJunk === true → skipped_by_junk++ → スキップ
 ```bash
 # Step 3で取得したURLで直接遷移
 agent-browser --session hardoff open "https://netmall.hardoff.co.jp/product/5100444/"
-sleep 3
+agent-browser --session hardoff wait --fn "!!document.querySelector('h1, [class*=\"product-name\"]')"
 ```
 
 ---
@@ -273,37 +285,37 @@ for each 画像URL:
   sips -Z 800 /tmp/hardoff_img_{N}.png --out /tmp/hardoff_resized_{N}.png
 ```
 
-**5-3: Vision比較**
+**5-3: Gemini APIで画像比較**
 
 ```bash
-# 全画像を読み込み
-Read /tmp/hardoff_resized_1.png
-Read /tmp/hardoff_resized_2.png
-...
+# APIキー読み込み
+set -a && source ~/.claude/skills/gemini-extract/.env && set +a
 
-# 参照画像と比較してconfidence判定
+# Gemini APIで参照画像と候補画像を比較
+python3 tools/gemini/compare_images.py \
+  --ref "{reference_image}" \
+  --candidates /tmp/hardoff_resized_*.png \
+  > /tmp/hardoff_compare.json
+
+# 結果確認
+cat /tmp/hardoff_compare.json
 ```
 
-**confidence判定基準**:
+**compare.json の読み取りとマッピング**:
 
-| レベル | 条件 |
-|--------|------|
-| **high** | 型番・形状・色が一致（本体の同一性確定） |
-| **medium** | 主要特徴は一致するが確証不足 |
-| **low** | 同シリーズだが別モデルの可能性 |
-
-**accessory_status判定基準**:
-
-| 値 | 条件 |
-|----|------|
-| **complete** | 付属品が完全一致 |
-| **missing** | 付属品が不足（本体は同一モデル） |
-| **unknown** | 判定不能（デフォルト値） |
+| compare.json フィールド | エージェントスキーマへのマッピング |
+|------------------------|----------------------------------|
+| `same_product: true` かつ `confidence: "high"/"medium"` | `matches` に追加 |
+| `confidence` | `"high"/"medium"/"low"` をそのまま使用 |
+| `best_candidate_index` | 候補URLリストの対応インデックスと紐付け |
+| `accessory_status` | そのまま使用 |
+| `same_product: false` | `matches: []`、`best_candidate` に格上げ |
+| `error` フィールドあり | `error: "VISION_FAILED"` としてスキーマに反映 |
 
 **5-4: 一時ファイル削除**
 
 ```bash
-rm /tmp/hardoff_img_*.png /tmp/hardoff_resized_*.png
+rm /tmp/hardoff_img_*.png /tmp/hardoff_resized_*.png /tmp/hardoff_compare.json
 ```
 
 ---
@@ -369,7 +381,14 @@ agent-browser --session hardoff screenshot /path/to/file.png
 ### 待機方法
 
 ```bash
-sleep 3  # 推奨
+# 要素出現待ち（推奨）
+agent-browser --session hardoff wait --fn "!!document.querySelector('input[type=\"search\"], input[name=\"q\"]')"                                                          # トップ検索ボックス
+agent-browser --session hardoff wait --fn "document.querySelectorAll('a[href*=\"/product/\"]').length > 0 || document.body.innerText.includes('見つかりませんでした')"       # 検索結果
+agent-browser --session hardoff wait --fn "!!document.querySelector('h1, [class*=\"product-name\"]')"                                                                     # 詳細ページ
+agent-browser --session hardoff wait 500                                                                                                                                  # 価格フィルタークリック後
+
+# 固定待機（最終手段）
+agent-browser --session hardoff wait 3000
 ```
 
 ---

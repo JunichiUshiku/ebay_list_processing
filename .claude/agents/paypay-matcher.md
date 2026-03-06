@@ -12,7 +12,7 @@ description: |
   - 「paypay match」
   - 「PayPayフリマ照合」
   - 「Yahoo!フリマで検索」
-tools: Read, Bash, Glob
+tools: Bash
 model: sonnet
 ---
 
@@ -121,6 +121,11 @@ Step 0: 初期化
 Step 1: PayPayフリマ検索
     │
     ▼
+Step 1.5: 0件チェック
+    │
+    ├─ 0件検出 → 次のキーワードへ（全キーワード試行後も0件: matches: [], best_candidate: null）
+    │
+    ▼
 Step 2: 販売中商品リスト抽出（全件取得・制限なし）
     │
     ▼
@@ -147,11 +152,8 @@ Step 5: JSON返却
 ### Step 0: 初期化
 
 ```bash
-# 参照画像の存在確認
-ls {reference_image}
-
-# 参照画像を読み込み（Step 4のVision比較で使用）
-Read {reference_image}
+# 参照画像の存在確認（Readは使用しない）
+test -f "{reference_image}" || { echo '{"error": "参照画像が見つかりません", "same_product": false, "confidence": "low"}'; exit 1; }
 ```
 
 **パラメータ確認**:
@@ -161,8 +163,6 @@ Read {reference_image}
 | target_price | 値があるか | 価格フィルタリング有効化 |
 | notes | 値があるか | 評価時に参考情報として使用 |
 
-**⚠️ 参照画像はStep 4まで保持**: Vision比較の基準となる画像
-
 ---
 
 ### Step 1: PayPayフリマ検索
@@ -170,22 +170,32 @@ Read {reference_image}
 ```bash
 # URLエンコードしたキーワードで直接検索ページを開く
 agent-browser --session paypay open "https://paypayfleamarket.yahoo.co.jp/search/{keyword}?page=1"
-sleep 3
+agent-browser --session paypay wait --fn "document.querySelectorAll('a[href*=\"/item/z\"]').length > 0 || document.body.innerText.includes('一致する商品はありません')"
 agent-browser --session paypay snapshot -i
 ```
 
 **代替方法（検索ボックス使用）**:
 ```bash
 agent-browser --session paypay open "https://paypayfleamarket.yahoo.co.jp/"
-sleep 3
+agent-browser --session paypay wait --fn "!!document.querySelector('input[type=\"search\"], [placeholder*=\"フリマ\"]')"
 agent-browser --session paypay snapshot -i
 # searchbox "Yahoo!フリマで探す" を探す
 agent-browser --session paypay fill @{ref} "{keyword}"
 agent-browser --session paypay press Enter
-sleep 3
+agent-browser --session paypay wait --fn "document.querySelectorAll('a[href*=\"/item/z\"]').length > 0 || document.body.innerText.includes('一致する商品はありません')"
 ```
 
 **重要**: `wait --load` は使用しない（analyticsでnetworkidleが成立しにくい）
+
+---
+
+### Step 1.5: 0件チェック
+
+```bash
+zero=$(agent-browser --session paypay snapshot -c | grep "一致する商品はありません")
+# 出力あり → 0件確定（サイトが代替商品を表示している状態）、次のキーワードへ
+# 出力なし → Step 2へ続行
+```
 
 ---
 
@@ -251,7 +261,7 @@ checked_count >= max_items → ループ終了
 ```bash
 # Step 2で取得したURLで直接遷移
 agent-browser --session paypay open "https://paypayfleamarket.yahoo.co.jp/item/z543177636"
-sleep 3
+agent-browser --session paypay wait --fn "!!document.querySelector('h1')"
 ```
 
 ---
@@ -323,52 +333,37 @@ for each 画像URL:
   sips -Z 800 /tmp/paypay_img_{N}.jpg --out /tmp/paypay_resized_{N}.jpg
 ```
 
-**4-3: Vision比較**
+**4-3: Gemini APIで画像比較**
 
 ```bash
-# 商品画像を読み込み
-Read /tmp/paypay_resized_1.jpg
-Read /tmp/paypay_resized_2.jpg
-...
+# APIキー読み込み
+set -a && source ~/.claude/skills/gemini-extract/.env && set +a
+
+# Gemini APIで参照画像と候補画像を比較（PayPayはjpg）
+python3 tools/gemini/compare_images.py \
+  --ref "{reference_image}" \
+  --candidates /tmp/paypay_resized_*.jpg \
+  > /tmp/paypay_compare.json
+
+# 結果確認
+cat /tmp/paypay_compare.json
 ```
 
-**比較対象**:
-- **参照画像**: Step 0で読み込んだ `reference_image`（入力パラメータ）
-- **商品画像**: Step 4-2で取得した詳細ページの全画像
+**compare.json の読み取りとマッピング**:
 
-**Vision比較の実行**:
-```
-参照画像（reference_image）
-    ↓ 比較
-商品画像1, 商品画像2, ... 商品画像N
-    ↓
-いずれかが一致 → confidence判定（high/medium/low）
-すべて不一致 → 次の商品へ
-```
-
-**confidence判定基準**:
-
-| レベル | 条件 |
-|--------|------|
-| **high** | 型番・形状・色が一致（本体の同一性確定） |
-| **medium** | 主要特徴は一致するが確証不足 |
-| **low** | 同シリーズだが別モデルの可能性 |
-
-**accessory_status判定基準**:
-
-| 値 | 条件 |
-|----|------|
-| **complete** | 付属品が完全一致 |
-| **missing** | 付属品が不足（本体は同一モデル） |
-| **unknown** | 判定不能（デフォルト値・後方互換） |
-
-**notes評価（notes設定時）**:
-notesに記載された条件に対する評価を `notes_evaluation` に記載
+| compare.json フィールド | エージェントスキーマへのマッピング |
+|------------------------|----------------------------------|
+| `same_product: true` かつ `confidence: "high"/"medium"` | `matches` に追加 |
+| `confidence` | `"high"/"medium"/"low"` をそのまま使用 |
+| `best_candidate_index` | 候補URLリストの対応インデックスと紐付け |
+| `accessory_status` | そのまま使用 |
+| `same_product: false` | `matches: []`、`best_candidate` に格上げ |
+| `error` フィールドあり | `error: "VISION_FAILED"` としてスキーマに反映 |
 
 **4-4: 一時ファイル削除**
 
 ```bash
-rm /tmp/paypay_img_*.jpg /tmp/paypay_resized_*.jpg
+rm /tmp/paypay_img_*.jpg /tmp/paypay_resized_*.jpg /tmp/paypay_compare.json
 ```
 
 ---
@@ -457,7 +452,12 @@ agent-browser --session paypay screenshot /path/to/file.png
 ### 待機方法
 
 ```bash
-sleep 3  # 推奨（PayPayフリマもanalyticsでnetworkidleが成立しにくい）
+# 要素出現待ち（推奨）
+agent-browser --session paypay wait --fn "document.querySelectorAll('a[href*=\"/item/z\"]').length > 0 || document.body.innerText.includes('一致する商品はありません')"  # 検索結果
+agent-browser --session paypay wait --fn "!!document.querySelector('h1')"                                                                                              # 詳細ページ
+
+# 固定待機（最終手段）
+agent-browser --session paypay wait 3000
 ```
 
 ### ⚠️ clickでページ遷移しない問題

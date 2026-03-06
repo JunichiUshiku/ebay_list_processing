@@ -11,7 +11,7 @@ description: |
   - 「ラクマで〇〇と同じ商品を検索」
   - 「rakuma match」
   - 「ラクマ照合」
-tools: Read, Bash, Glob
+tools: Bash
 model: sonnet
 ---
 
@@ -141,11 +141,8 @@ Step 5: JSON返却
 ### Step 0: 初期化
 
 ```bash
-# 参照画像の存在確認
-ls {reference_image}
-
-# 参照画像を読み込み（Vision比較用）
-Read {reference_image}
+# 参照画像の存在確認（Readは使用しない）
+test -f "{reference_image}" || { echo '{"error": "参照画像が見つかりません", "same_product": false, "confidence": "low"}'; exit 1; }
 ```
 
 - reference_image: 必須パラメータ、存在しない場合はエラー終了
@@ -159,7 +156,7 @@ Read {reference_image}
 ```bash
 # 販売中のみで直接検索（URLパラメータで指定）
 agent-browser --session rakuma open "https://fril.jp/s?query={keyword}&transaction=selling"
-sleep 3
+agent-browser --session rakuma wait --fn "document.querySelectorAll('a[href*=\"item.fril.jp\"]').length > 0 || document.body.innerText.includes('見つかりません')"
 agent-browser --session rakuma snapshot -i
 ```
 
@@ -167,11 +164,11 @@ agent-browser --session rakuma snapshot -i
 
 ```bash
 agent-browser --session rakuma open "https://fril.jp/s?query={keyword}"
-sleep 3
+agent-browser --session rakuma wait --fn "document.querySelectorAll('a[href*=\"item.fril.jp\"]').length > 0 || document.body.innerText.includes('見つかりません')"
 agent-browser --session rakuma snapshot -i
 # 「販売中のみ」チェックボックスをチェック
 agent-browser --session rakuma check @e9
-sleep 2
+agent-browser --session rakuma wait 1000
 ```
 
 **重要**: `wait --load` は使用しない（analyticsでnetworkidleが成立しにくい）
@@ -218,7 +215,7 @@ price > target_price → filtered_by_price++ → スキップ
 ```bash
 # Step 2で取得したURLで直接遷移
 agent-browser --session rakuma open "https://item.fril.jp/abc123def456"
-sleep 3
+agent-browser --session rakuma wait --fn "!!document.querySelector('h1')"
 ```
 
 ---
@@ -287,40 +284,37 @@ for each 画像URL:
   sips -Z 800 /tmp/rakuma_img_{N}.png --out /tmp/rakuma_resized_{N}.png
 ```
 
-**4-3: Vision比較**
+**4-3: Gemini APIで画像比較**
 
 ```bash
-# 全画像を読み込み
-Read /tmp/rakuma_resized_1.png
-Read /tmp/rakuma_resized_2.png
-...
+# APIキー読み込み
+set -a && source ~/.claude/skills/gemini-extract/.env && set +a
 
-# 参照画像と比較してconfidence判定
+# Gemini APIで参照画像と候補画像を比較
+python3 tools/gemini/compare_images.py \
+  --ref "{reference_image}" \
+  --candidates /tmp/rakuma_resized_*.png \
+  > /tmp/rakuma_compare.json
+
+# 結果確認
+cat /tmp/rakuma_compare.json
 ```
 
-**confidence判定基準**:
+**compare.json の読み取りとマッピング**:
 
-| レベル | 条件 |
-|--------|------|
-| **high** | 型番・形状・色が一致（本体の同一性確定） |
-| **medium** | 主要特徴は一致するが確証不足 |
-| **low** | 同シリーズだが別モデルの可能性 |
-
-**accessory_status判定基準**:
-
-| 値 | 条件 |
-|----|------|
-| **complete** | 付属品が完全一致 |
-| **missing** | 付属品が不足（本体は同一モデル） |
-| **unknown** | 判定不能（デフォルト値・後方互換） |
-
-**notes評価（notes設定時）**:
-notesに記載された条件に対する評価を `notes_evaluation` に記載
+| compare.json フィールド | エージェントスキーマへのマッピング |
+|------------------------|----------------------------------|
+| `same_product: true` かつ `confidence: "high"/"medium"` | `matches` に追加 |
+| `confidence` | `"high"/"medium"/"low"` をそのまま使用 |
+| `best_candidate_index` | 候補URLリストの対応インデックスと紐付け |
+| `accessory_status` | そのまま使用 |
+| `same_product: false` | `matches: []`、`best_candidate` に格上げ |
+| `error` フィールドあり | `error: "VISION_FAILED"` としてスキーマに反映 |
 
 **4-4: 一時ファイル削除**
 
 ```bash
-rm /tmp/rakuma_img_*.png /tmp/rakuma_resized_*.png
+rm /tmp/rakuma_img_*.png /tmp/rakuma_resized_*.png /tmp/rakuma_compare.json
 ```
 
 ---
@@ -410,7 +404,13 @@ agent-browser --session rakuma screenshot /path/to/file.png
 ### 待機方法
 
 ```bash
-sleep 3  # 推奨（analyticsでnetworkidleが成立しにくい）
+# 要素出現待ち（推奨）
+agent-browser --session rakuma wait --fn "document.querySelectorAll('a[href*=\"item.fril.jp\"]').length > 0 || document.body.innerText.includes('見つかりません')"  # 検索結果
+agent-browser --session rakuma wait --fn "!!document.querySelector('h1')"                                                                                          # 詳細ページ
+agent-browser --session rakuma wait 1000                                                                                                                           # フィルター適用後
+
+# 固定待機（最終手段）
+agent-browser --session rakuma wait 3000
 ```
 
 ### ⚠️ clickでページ遷移しない問題

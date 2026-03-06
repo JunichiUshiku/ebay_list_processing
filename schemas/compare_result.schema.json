@@ -1,0 +1,13 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["same_product", "confidence", "best_candidate_index", "accessory_status", "missing_accessories", "notes"],
+  "properties": {
+    "same_product": { "type": "boolean" },
+    "confidence": { "enum": ["high", "medium", "low"] },
+    "best_candidate_index": { "type": "integer", "minimum": 0 },
+    "accessory_status": { "enum": ["complete", "missing", "unknown"] },
+    "missing_accessories": { "type": "array", "items": { "type": "string" } },
+    "notes": { "type": "array", "items": { "type": "string" } }
+  }
+}

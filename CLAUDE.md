@@ -93,6 +93,36 @@ mcp__playwright__browser_snapshot
 
 ---
 
+## Gemini API 画像比較ツール
+
+マッチャーエージェントの画像比較処理は Gemini API に委譲する（Claudeコンテキストへの画像読み込み禁止）。
+
+### 実行方法
+
+```bash
+source ~/.claude/skills/gemini-extract/.env
+python tools/gemini/compare_images.py \
+  --ref "{reference_image}" \
+  --candidates /tmp/{site}_resized_*.{ext} \
+  > /tmp/{site}_compare.json
+cat /tmp/{site}_compare.json
+```
+
+### 対応エージェントと拡張子
+
+| エージェント | ワイルドカードパターン |
+|------------|---------------------|
+| mercari / yahoo / rakuma / hardoff / surugaya | `/tmp/{site}_resized_*.png` |
+| paypay | `/tmp/paypay_resized_*.jpg` |
+
+### ルール
+
+- **Read ツールで画像を読み込むことは禁止**（トークン節約のため）
+- APIキーは `~/.claude/skills/gemini-extract/.env` から `source` で読み込む
+- 詳細: `tools/gemini/README.md`
+
+---
+
 ## Claude in Chrome MCP セキュリティ制限
 
 Claude in Chrome MCPは、セキュリティ対策として以下のデータをJavaScript実行結果（javascript_tool）として返すことをブロックする：
