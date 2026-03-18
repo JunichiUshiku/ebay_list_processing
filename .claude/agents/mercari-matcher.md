@@ -15,14 +15,17 @@ tools: Bash
 model: sonnet
 ---
 
-# メルカリ同一商品検索ワークフロー v6.0
+# メルカリ同一商品検索ワークフロー v7.0
 
 ## CRITICAL RULES（必ず遵守）
 
 1. **画像ダウンロード禁止**: /tmp一時保存 → 処理後削除
 2. **詳細ページ全画像比較**: 掲載されている全画像が対象
 3. **固定JSONスキーマ**: 必ず指定スキーマで返却
-4. **売り切れ判定**: snapshotの「売り切れ」テキストで判定
+4. **売り切れ判定（3層防御）**:
+   - 第1層: 検索URLに `&status=on_sale` を必ず付与（サーバーサイド除外）
+   - 第2層: 検索結果で `data-testid="thumbnail-sticker"` 要素の有無で判定（`textContent`判定は禁止）
+   - 第3層: 詳細ページで売却済みシグナル（「配送されました」「売り切れ」「取引完了」「SOLD」）をチェック
 5. **clickでページ遷移しない**: eval でURL取得 → open で直接遷移
 6. **800pxリサイズ**: 長辺800px以上は800pxに縮小（トークン節約）
 
@@ -33,7 +36,7 @@ model: sonnet
 | パラメータ | 型 | 必須 | デフォルト | 説明 |
 |------------|-----|------|-----------|------|
 | keyword | string | ✓ | - | 検索キーワード |
-| reference_image | string | ✓ | - | 参照画像ファイルパス（例: `images/Target-Product/405912557904.jpg`） |
+| reference_image | string | ✓ | - | 参照画像ワイルドカードパス（例: `images/Target-Product/405912557904_*.jpg`、最大4枚） |
 | max_items | number | - | 10 | 検査件数上限 |
 | target_price | number | - | null | 仕入れ金額上限（円）。超過商品はスキップ |
 | notes | string | - | null | 備考（検索条件、除外条件等の参考情報） |
@@ -116,7 +119,7 @@ model: sonnet
 Step 0: 初期化
     │
     ▼
-Step 1: メルカリ検索
+Step 1: メルカリ検索（&status=on_sale 必須）  ← 第1層防御
     │
     ▼
 Step 1.5: 0件チェック
@@ -124,10 +127,15 @@ Step 1.5: 0件チェック
     ├─ 0件検出 → 次のキーワードへ（全キーワード試行後も0件: matches: [], best_candidate: null）
     │
     ▼
-Step 2: 販売中商品リスト抽出
+Step 2: 販売中商品リスト抽出（thumbnail-sticker判定）  ← 第2層防御
     │
     ▼
 Step 3: 商品詳細ページへ遷移（eval+open方式）
+    │
+    ▼
+Step 3.3: 売却済み判定（配送されました/売り切れ等）  ← 第3層防御
+    │
+    ├─ 売却済みシグナルあり → スキップ
     │
     ▼
 Step 3.5: ジャンク品判定
@@ -147,7 +155,7 @@ Step 5: JSON返却
 
 ```bash
 # 参照画像の存在確認（Readは使用しない）
-test -f "{reference_image}" || { echo '{"error": "参照画像が見つかりません", "same_product": false, "confidence": "low"}'; exit 1; }
+ls {reference_image} >/dev/null 2>&1 || { echo '{"error": "参照画像が見つかりません", "same_product": false, "confidence": "low"}'; exit 1; }
 ```
 
 - reference_image: 必須パラメータ、存在しない場合はエラー終了
@@ -159,15 +167,15 @@ test -f "{reference_image}" || { echo '{"error": "参照画像が見つかりま
 ### Step 1: メルカリ検索
 
 ```bash
-agent-browser --session mercari open "https://jp.mercari.com/"
-agent-browser --session mercari wait --fn "!!document.querySelector('input[name=\"keyword\"], [data-testid=\"search-input\"], input[type=\"search\"]')"
-agent-browser --session mercari snapshot -i
-agent-browser --session mercari fill @e4 "{keyword}"
-agent-browser --session mercari press Enter
+# 販売中のみフィルタ付きURLで直接検索（第1層防御）
+agent-browser --session mercari open "https://jp.mercari.com/search?keyword={keyword}&status=on_sale"
 agent-browser --session mercari wait --fn "document.querySelectorAll('a[href*=\"/item/\"]').length > 0 || document.body.innerText.includes('出品された商品がありません')"
 ```
 
-**重要**: `wait --load` は使用しない（メルカリはanalyticsでnetworkidleが成立しにくい）
+**重要**:
+- `&status=on_sale` を必ず付与すること（売り切れ商品をサーバーサイドで除外）
+- キーワード変更して再検索する場合も、必ず `&status=on_sale` 付きURLで `open` すること
+- `wait --load` は使用しない（メルカリはanalyticsでnetworkidleが成立しにくい）
 
 ---
 
@@ -181,29 +189,35 @@ zero=$(agent-browser --session mercari snapshot -c | grep "出品された商品
 
 ---
 
-### Step 2: 販売中商品リスト抽出
+### Step 2: 販売中商品リスト抽出（第2層防御）
 
-**方法A: snapshotからテキスト判定**
+**推奨: JavaScript eval で `data-testid="thumbnail-sticker"` 判定**
+
+```bash
+# 仕様書準拠: thumbnail-sticker要素の有無で売り切れ判定
+agent-browser --session mercari eval "JSON.stringify(
+  Array.from(document.querySelectorAll('a[href*=\"/item/\"]'))
+    .filter(a => !a.querySelector('[data-testid=\"thumbnail-sticker\"]'))
+    .slice(0, {max_items})
+    .map(a => ({
+      url: a.href,
+      price: a.textContent.match(/[\d,]+円/)?.[0] || '',
+      title: a.querySelector('[data-testid=\"thumbnail-item-name\"]')?.textContent?.trim() || ''
+    }))
+)"
+```
+
+**⚠️ 禁止: `textContent.includes('売り切れ')` は使用しないこと**
+- 売り切れ表示は `aria-label` 属性に格納され、`textContent` には含まれない場合がある
+- 詳細: `docs/specs/thumbnail-sticker.md`
+
+**フォールバック: snapshotからテキスト判定**
 
 ```bash
 agent-browser --session mercari snapshot -i
 # 出力例:
 # link "商品Aの画像 10,000円" [ref=e40]        ← 販売中
 # link "商品Bの画像 売り切れ 6,580円" [ref=e42] ← スキップ
-```
-
-**方法B: JavaScript eval でURL・価格を一括取得**
-
-```bash
-agent-browser --session mercari eval "JSON.stringify(
-  Array.from(document.querySelectorAll('a[href*=item]'))
-    .filter(a => !a.textContent.includes('売り切れ'))
-    .slice(0, 10)
-    .map(a => ({
-      url: a.href,
-      price: a.textContent.match(/[\d,]+円/)?.[0] || ''
-    }))
-)"
 ```
 
 **価格フィルタリング（target_price設定時）**:
@@ -221,6 +235,35 @@ price > target_price → filtered_by_price++ → スキップ
 # Step 2で取得したURLで直接遷移
 agent-browser --session mercari open "https://jp.mercari.com/item/m50852225537"
 agent-browser --session mercari wait --fn "!!document.querySelector('h1')"
+```
+
+---
+
+### Step 3.3: 売却済み判定（第3層防御）
+
+**判定コマンド（DOM要素を直接チェック）**:
+```bash
+agent-browser --session mercari eval "JSON.stringify({
+  isSold: document.body.innerText.includes('配送されました')
+    || document.body.innerText.includes('売り切れました')
+    || document.body.innerText.includes('取引完了')
+    || !!document.querySelector('[data-testid=\"transaction-complete\"]')
+    || !document.querySelector('button[data-testid=\"checkout-button\"], [aria-label=\"購入手続きへ\"]')
+})"
+```
+
+**判定ロジック**:
+| チェック | 根拠 |
+|---------|------|
+| `配送されました` を含む | 売却済み商品の配送情報（実行ログで確認済み） |
+| `売り切れました` を含む | メルカリの標準的な売り切れ表示 |
+| `取引完了` を含む | 取引完了後の表示 |
+| 購入ボタンが存在しない | 販売中商品には必ず購入ボタンがある |
+
+**判定フロー**:
+```
+isSold: true → 次の商品へ（売り切れ商品として除外）
+isSold: false → Step 3.5（ジャンク品判定）へ
 ```
 
 ---
@@ -288,7 +331,7 @@ set -a && source ~/.claude/skills/gemini-extract/.env && set +a
 
 # Gemini APIで参照画像と候補画像を比較
 python3 tools/gemini/compare_images.py \
-  --ref "{reference_image}" \
+  --ref {reference_image} \
   --candidates /tmp/mercari_resized_*.png \
   > /tmp/mercari_compare.json
 

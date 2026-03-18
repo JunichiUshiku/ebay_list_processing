@@ -173,54 +173,79 @@ lastRow = max(行番号 where C列 ≠ 空)
 | F列が空/0 | U列に「スキップ」記載 → 次の行へ |
 | 上記以外 | Step 4へ進む |
 
-### Step 4: eBayページ確認
+### Step 4: eBayページ確認（agent-browser使用）
 
-1. `mcp__claude-in-chrome__navigate` で `https://www.ebay.com/itm/{C列}` を開く
-2. `mcp__claude-in-chrome__computer` (action: wait, duration: 3) でページロード待機
-3. `mcp__claude-in-chrome__javascript_tool` でページ状態と画像URLを一括取得:
-   ```javascript
-   JSON.stringify({
-     title: document.querySelector('h1.x-item-title__mainTitle')?.textContent?.trim() || null,
-     image: document.querySelector('.ux-image-carousel-item img')?.src || null,
-     isEnded: document.body.innerText.includes('This listing has ended'),
-     isError: document.title.includes('Error Page') || !document.querySelector('h1.x-item-title__mainTitle')
-   })
-   ```
-4. 正常/ENDEDの場合、商品画像を保存:
+1. eBayプロファイルでページを開く:
    ```bash
-   curl -o "images/Target-Product/{C列}.jpg" "{image URL}"
+   agent-browser --profile ~/.agent-browser-profiles/ebay --headed open "https://www.ebay.com/itm/{C列}"
+   ```
+2. ページ内容を取得:
+   ```bash
+   agent-browser snapshot -c
+   ```
+3. スナップショットからタイトル・画像URL・ページ状態を確認:
+   - タイトル: `h1` 要素のテキスト
+   - 画像URL: `img` 要素の `src` 属性（最大4枚）
+   - ENDED判定: "This listing has ended" の有無
+   - エラー判定: "Error Page" やタイトル不在
+4. 画像URLが取得できない場合、JavaScriptで取得:
+   ```bash
+   agent-browser execute "JSON.stringify(Array.from(document.querySelectorAll('.ux-image-carousel-item img')).map(img => img.src).filter(src => src && !src.includes('data:')).filter((v,i,a) => a.indexOf(v) === i).slice(0, 4))"
+   ```
+5. 正常/ENDEDの場合、商品画像を最大4枚保存:
+   ```bash
+   # images配列の枚数分だけ実行（最大4枚）
+   python3 -c "
+   import ssl, urllib.request
+   ctx = ssl.create_default_context()
+   ctx.check_hostname = False
+   ctx.verify_mode = ssl.CERT_NONE
+   req = urllib.request.Request('{images[N]}', headers={'User-Agent': 'Mozilla/5.0'})
+   with urllib.request.urlopen(req, context=ctx) as resp:
+       data = resp.read()
+   with open('images/Target-Product/{C列}_{N}.jpg', 'wb') as f:
+       f.write(data)
+   "
+   ```
+6. ブラウザを閉じる:
+   ```bash
+   agent-browser close
    ```
 
 | 状態 | 判定 | 対応 |
 |------|------|------|
-| 正常 | `isError: false`, `isEnded: false` | 画像保存 → Step 5へ |
-| ENDED | `isEnded: true` | 画像保存 → Step 5へ |
-| エラー | `isError: true` or `title: null` | U列=`スキップ`、W列=`エラー（eBayページなし）` → 次の行へ |
+| 正常 | タイトルあり、ENDEDなし | 画像保存（最大4枚） → Step 5へ |
+| ENDED | "This listing has ended" あり | 画像保存（最大4枚） → Step 5へ |
+| エラー | タイトルなし or Error Page | U列=`スキップ`、W列=`エラー（eBayページなし）` → 次の行へ |
 
 
 ### Step 5: 検索キーワード確定
 
 B列の値を検索キーワードとして使用（B列が空の場合はStep 3でスキップ済み）
 
-### Step 6: 仕入れ先検索（サブエージェント並列実行）
+### Step 6: 仕入れ先検索（現在の1商品のみ・6サイト並列）
 
-Taskツールで仕入れ先検索サブエージェントを**並列実行**:
+**現在処理中の1商品に対してのみ**、6サイトのサブエージェントを並列起動する。
+次の商品のサブエージェントは、現在の商品のStep 8（結果記録）が完了するまで起動してはならない。
 
 ```
-// 1メッセージで複数Taskを呼び出し → 並列実行
+// 現在の1商品に対して6サイトを並列起動
 Task: mercari-matcher (prompt: ...)
 Task: paypay-matcher (prompt: ...)
 Task: rakuma-matcher (prompt: ...)
 Task: yahoo-auction-matcher (prompt: ...)
 Task: hardoff-matcher (prompt: ...)
 Task: surugaya-matcher (prompt: ...)
+
+// ⚠ 全6サイトの結果が揃うまで待機してからStep 7へ進む
+// ⚠ Step 8の記録が完了するまで次の商品のStep 4に進んではならない
 ```
 
 **共通パラメータ**:
 | パラメータ | 取得元 | 例 |
 |-----------|--------|-----|
 | keyword | B列 | "YAMAHA YTS-62" |
-| reference_image | Step 4で保存 | "images/Target-Product/405912557904.jpg" |
+| reference_image | Step 4で保存 | "images/Target-Product/405912557904_*.jpg"（ワイルドカード、最大4枚） |
 | target_price | F列 | 50000 |
 | notes | P列 | "中古" |
 
@@ -279,9 +304,20 @@ Task: surugaya-matcher (prompt: ...)
 | `reason_code` | 条件未達の理由（best_candidate用） |
 ```
 
+### Step 6.5: サブエージェント失敗時の処理
+
+6サイト全ての結果が返るまで待機する。結果がJSON以外（エラーメッセージ、クォータ切れ等）の場合:
+
+| 失敗数 | 対応 |
+|--------|------|
+| 1〜2サイト失敗 | 成功したサイトの結果のみでStep 7へ進む（W列に未検索サイトを併記） |
+| 3サイト以上失敗 | 処理を中断し、ユーザーに状況を報告して指示を仰ぐ |
+
+W列の未検索サイト併記例: `メルカリ 8,500円 中古（未検索: ヤフオク）`
+
 ### Step 7: 仕入れ判断（結果統合）
 
-全サブエージェントの返却JSONから最適な仕入れ先を選定:
+全サブエージェント（または成功分）の返却JSONから最適な仕入れ先を選定:
 
 **7-1. matchesから条件合致候補を選定**:
 1. 各サブエージェントの `matches` を収集
@@ -323,19 +359,30 @@ data: [[U列値, V列値, W列値]]
 
 ### Step 9: 後処理（行ごと）
 
-1. 商品画像を削除: `rm -f images/Target-Product/{C列}.jpg`
+1. 商品画像を削除: `rm -f images/Target-Product/{C列}_*.jpg`
 2. 不要タブを閉じる
 3. 10件ごとに進捗報告
 4. 現在行をインクリメント → **Step 3.5へ戻る**
 
 ```
-ループフロー:
-  Step 3.5: 現在行 > lastRow ? → Yes → Step 10（終了）
-                              → No  → スキップ判定
-  ↓
-  Step 4〜8: 処理実行
-  ↓
-  Step 9: 後処理 → 現在行++ → Step 3.5へ
+ループフロー（1商品ずつ順次処理）:
+
+  ┌─→ Step 3.5: 現在行 > lastRow ? → Yes → Step 10（終了）
+  │                               → No  → スキップ判定
+  │   ↓
+  │   Step 4: eBayページ確認（現在の1商品）
+  │   ↓
+  │   Step 5: キーワード確定
+  │   ↓
+  │   Step 6: 6サイト並列検索（現在の1商品のみ）
+  │   ↓
+  │   Step 6.5: 全結果待機・失敗判定
+  │   ↓
+  │   Step 7: 結果統合・仕入れ判断
+  │   ↓
+  │   Step 8: スプレッドシートに記録 ← ここで初めて次の商品に進める
+  │   ↓
+  └── Step 9: 後処理 → 現在行++
 ```
 
 ### Step 10: 完了処理
@@ -365,5 +412,7 @@ data: [[U列値, V列値, W列値]]
 ## 前提条件
 
 - Google Sheets MCPサーバー設定済み
-- Claude in Chrome MCP設定済み
+- agent-browser インストール済み
+- eBayプロファイル設定済み（`~/.agent-browser-profiles/ebay`）
 - Cookie同意ダイアログは「許可」で対応
+- **Claude in Chrome / Playwright MCPの使用禁止**（ユーザー明示指示時のみ例外）

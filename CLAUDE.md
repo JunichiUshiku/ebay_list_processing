@@ -36,10 +36,13 @@ skill: "ebay-sourcing"
 - 「販売履歴」
 - スプレッドシートの販売数調査依頼
 
+**リストID指定（A列から該当行を検索）**:
+- 14桁の数値ID（例: 20200915100021）を指定した場合
+- 複数リストIDを改行区切りで指定した場合
+
 **アイテムナンバー指定（C列から該当行を検索）**:
-- 「{アイテムナンバー}の販売数を調べて」
+- 12桁のeBayアイテムナンバー（例: 402439432345）を指定した場合
 - 複数アイテムナンバーを改行区切りで指定した場合
-- 例: 「403498476787、405090876155の販売数」
 
 ### 正しい実行方法
 
@@ -50,11 +53,9 @@ skill: "ebay-sold-count"
 
 これにより、SKILL.mdに定義されたeBay Product Research検索と販売件数記録のワークフローが確実に実行される。
 
-## ブラウザ操作の優先順位
+## ブラウザ操作ルール
 
-ブラウザを使用する際は、以下の優先順位で選択すること：
-
-### 1. agent-browser（優先）
+### agent-browser を使用すること（必須）
 
 ```bash
 agent-browser open <url>
@@ -67,29 +68,14 @@ agent-browser click @e1
 - `--profile` オプションで認証状態を永続化可能
 - `--session` オプションで並列セッション管理可能
 
-### 2. Claude in Chrome（フォールバック）
+### Claude in Chrome（mcp__claude-in-chrome__*）は使用禁止
 
-以下の場合にのみ Claude in Chrome を使用：
+**ユーザーが明示的に言及しない限り、Claude in Chrome の使用は絶対禁止。**
+SKILL.mdやエージェント定義に記載があっても、agent-browser で実行すること。
 
-- agent-browser でページが正常に読み込めない場合
-- 複雑なJavaScript操作が必要な場合
-- リアルタイムのDOM監視が必要な場合
-- agent-browser がインストールされていない環境
+### Playwright MCP（mcp__playwright__*）も使用禁止
 
-```
-mcp__claude-in-chrome__navigate
-mcp__claude-in-chrome__read_page
-mcp__claude-in-chrome__computer
-```
-
-### 3. Playwright MCP（特殊用途）
-
-テスト自動化や特殊なブラウザ制御が必要な場合：
-
-```
-mcp__playwright__browser_navigate
-mcp__playwright__browser_snapshot
-```
+**ユーザーが明示的に言及しない限り、Playwright MCP の使用は絶対禁止。**
 
 ---
 
@@ -102,7 +88,7 @@ mcp__playwright__browser_snapshot
 ```bash
 source ~/.claude/skills/gemini-extract/.env
 python tools/gemini/compare_images.py \
-  --ref "{reference_image}" \
+  --ref {reference_image} \
   --candidates /tmp/{site}_resized_*.{ext} \
   > /tmp/{site}_compare.json
 cat /tmp/{site}_compare.json
@@ -123,24 +109,12 @@ cat /tmp/{site}_compare.json
 
 ---
 
-## Claude in Chrome MCP セキュリティ制限
+## Claude in Chrome / Playwright 参考情報
 
-Claude in Chrome MCPは、セキュリティ対策として以下のデータをJavaScript実行結果（javascript_tool）として返すことをブロックする：
+Claude in Chrome・Playwright MCPは使用禁止（上記「ブラウザ操作ルール」参照）。
+ユーザーが明示的に使用を指示した場合のみ、以下の制限に注意：
 
-- URLやクエリ文字列を含むデータ
-- クッキー情報
-- セッション情報
+### Claude in Chrome セキュリティ制限
 
-### ブロックされる操作例
-
-| 操作 | コード例 | 結果 |
-|------|---------|------|
-| URL取得 | `window.location.href` | ブロック |
-| URL含むJSON | `JSON.stringify({url: location.href})` | ブロック |
-| クエリ文字列 | `location.search` | ブロック |
-
-### 代替方法
-
-1. **URL生成時に保持**: ナビゲート用URLを生成した時点で変数に保持
-2. **結果取得は数値・テキストのみ**: javascript_toolでは数値やテキストのみ取得
-3. **保持したURLを再利用**: HYPERLINKなどに使用する場合は保持済みURLを使用
+- javascript_toolでURL・クッキー・セッション情報を含むデータの返却がブロックされる
+- 代替: URL生成時に変数保持、結果取得は数値・テキストのみ
