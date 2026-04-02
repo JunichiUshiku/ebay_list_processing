@@ -145,9 +145,51 @@ ranges: {
 
 **注意**: `serverName:tool_name` 形式は本環境では使用しない。
 
-### 2-2: 処理モード判定とデータ取得（アイテム番号ベース）
+### 2-2: 処理モード判定とデータ取得（ID指定ベース）
 
 **重要**: トークン制限（25,000トークン）を回避するため、必要な列のみを段階的に取得する。
+
+#### ID判定ロジック
+
+ユーザーが数値IDを指定した場合、桁数で検索対象列を自動判定：
+- **14桁（例: 20200915100021）** → リストID → **A列検索**
+- **12桁（例: 402439432345）** → eBayアイテムナンバー → **C列検索**
+
+#### リストID指定時
+
+1. **A列のみ取得**
+   ```
+   mcp__google-sheets__get_sheet_data
+   spreadsheet_id: 1pmbzGCHCqd0EiyuJBl6rfUEGXVITcBDMGPg9bQ67d-g
+   sheet: AI作業用
+   range: A:A
+   ```
+
+2. **リストIDリスト生成**（行番号は保存しない）
+   - A列から指定されたリストIDを検索
+   - 存在確認のみ行い、リストIDをリストに追加
+   - 見つからないIDは警告を表示
+
+   ```javascript
+   const targetIds = ["20200915100021", "20240107100302"];  // ユーザー指定
+   const targetRows = [];  // リストIDのみのリスト
+   const notFound = [];
+
+   for (const listId of targetIds) {
+     const exists = columnA.some(cell => cell?.trim() === listId.trim());
+     if (exists) {
+       targetRows.push(listId);
+     } else {
+       notFound.push(listId);
+     }
+   }
+
+   if (notFound.length > 0) {
+     console.warn(`見つかりませんでした: ${notFound.join(', ')}`);
+   }
+
+   // target_rows: ["20200915100021", "20240107100302"]
+   ```
 
 #### アイテムナンバー指定時
 
@@ -677,24 +719,34 @@ if (cursor >= total) {
 }
 ```
 
-#### C列取得とアイテム→行マップ作成
+#### ID→行マップ作成
 
-処理開始時に1回だけ実行（各バッチで再取得は不要）：
+処理開始時に1回だけ実行（各バッチで再取得は不要）。
+リストID指定時はA列、アイテムナンバー指定時はC列から作成：
 
 ```javascript
-// C列全体を取得
-const columnC = await getSheetData({range: "C:C"});
+// リストID指定時: A列全体を取得
+const columnA = await getSheetData({range: "A:A"});
+const idToRowMap = {};
+columnA.forEach((id, index) => {
+  if (id?.trim()) {
+    idToRowMap[id.trim()] = index + 1;  // 1-based indexing
+  }
+});
+// 例: {"20200915100021": 2, "20240107100302": 3, ...}
 
-// アイテム番号 → 行番号のマップを作成
+// アイテムナンバー指定時: C列全体を取得
+const columnC = await getSheetData({range: "C:C"});
 const itemToRowMap = {};
 columnC.forEach((item, index) => {
   if (item?.trim()) {
     itemToRowMap[item.trim()] = index + 1;  // 1-based indexing
   }
 });
-
 // 例: {"403498476787": 33, "405090876155": 45, ...}
 ```
+
+**注意**: `item_to_row_map` は検索列（A列またはC列）に応じて適切な方を使用する。
 
 #### cursorベースのループ
 

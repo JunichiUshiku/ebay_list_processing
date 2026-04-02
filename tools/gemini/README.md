@@ -28,23 +28,23 @@ source ~/.claude/skills/gemini-extract/.env
 
 ## 使用方法
 
-### 基本実行
+### 基本実行（単一参照画像）
 
 ```bash
 source ~/.claude/skills/gemini-extract/.env
 
 python tools/gemini/compare_images.py \
-  --ref "images/Target-Product/405912557904.jpg" \
+  --ref "images/Target-Product/405912557904_1.jpg" \
   --candidates /tmp/mercari_resized_1.png /tmp/mercari_resized_2.png
 ```
 
-### ワイルドカード使用
+### 複数参照画像（ワイルドカード）
 
 ```bash
 source ~/.claude/skills/gemini-extract/.env
 
 python tools/gemini/compare_images.py \
-  --ref "images/Target-Product/405912557904.jpg" \
+  --ref images/Target-Product/405912557904_*.jpg \
   --candidates /tmp/mercari_resized_*.png
 ```
 
@@ -52,7 +52,7 @@ python tools/gemini/compare_images.py \
 
 ```bash
 python tools/gemini/compare_images.py \
-  --ref "images/Target-Product/405912557904.jpg" \
+  --ref images/Target-Product/405912557904_*.jpg \
   --candidates /tmp/mercari_resized_*.png \
   --model gemini-2.5-flash
 ```
@@ -99,9 +99,9 @@ python tools/gemini/compare_images.py \
 # APIキー読み込み
 source ~/.claude/skills/gemini-extract/.env
 
-# 画像比較実行
+# 画像比較実行（複数参照画像対応）
 python tools/gemini/compare_images.py \
-  --ref "{reference_image}" \
+  --ref {reference_image} \
   --candidates /tmp/mercari_resized_*.png \
   > /tmp/mercari_compare.json
 

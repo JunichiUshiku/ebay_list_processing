@@ -34,7 +34,7 @@ model: sonnet
 | パラメータ | 型 | 必須 | デフォルト | 説明 |
 |------------|-----|------|-----------|------|
 | keyword | string | ✓ | - | 検索キーワード |
-| reference_image | string | ✓ | - | 参照画像ファイルパス（例: `images/Target-Product/405912557904.jpg`） |
+| reference_image | string | ✓ | - | 参照画像ワイルドカードパス（例: `images/Target-Product/405912557904_*.jpg`、最大4枚） |
 | max_items | number | - | 10 | 検査件数上限 |
 | target_price | number | - | null | 仕入れ金額上限（円）。超過商品はスキップ |
 | notes | string | - | null | 備考（検索条件、除外条件等の参考情報） |
@@ -163,7 +163,7 @@ Step 5: JSON返却
 
 ```bash
 # 参照画像の存在確認（Readは使用しない）
-test -f "{reference_image}" || { echo '{"error": "参照画像が見つかりません", "same_product": false, "confidence": "low"}'; exit 1; }
+ls {reference_image} >/dev/null 2>&1 || { echo '{"error": "参照画像が見つかりません", "same_product": false, "confidence": "low"}'; exit 1; }
 ```
 
 - reference_image: 必須パラメータ、存在しない場合はエラー終了
@@ -419,7 +419,7 @@ set -a && source ~/.claude/skills/gemini-extract/.env && set +a
 
 # Gemini APIで参照画像と候補画像を比較
 python3 tools/gemini/compare_images.py \
-  --ref "{reference_image}" \
+  --ref {reference_image} \
   --candidates /tmp/surugaya_resized_*.png \
   > /tmp/surugaya_compare.json
 
@@ -601,6 +601,15 @@ agent-browser --session surugaya eval "
 - DVD/CD: `/product-other/detail/`
 
 ---
+
+## ブラウザ管理ルール（必須）
+
+1. **処理完了時に必ず閉じる**: `agent-browser --session surugaya close`
+2. **エラー終了時も閉じる**: JSON返却の直前に必ず close を実行
+3. **セッション名は `surugaya` 固定**: 番号付き（surugaya2等）の作成禁止
+4. **他セッション使用禁止**: mercari, yahoo, paypay 等を使わない
+5. **`--headed` 禁止**: ヘッドレスで動作
+6. **`pkill` 禁止**: 他セッションを巻き込むため
 
 ## 関連仕様
 

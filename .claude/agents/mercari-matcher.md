@@ -467,6 +467,15 @@ agent-browser --session mercari open "{取得したURL}"
 
 ---
 
+## ブラウザ管理ルール（必須）
+
+1. **処理完了時に必ず閉じる**: `agent-browser --session mercari close`
+2. **エラー終了時も閉じる**: JSON返却の直前に必ず close を実行
+3. **セッション名は `mercari` 固定**: 番号付き（mercari2等）の作成禁止
+4. **他セッション使用禁止**: yahoo, paypay, rakuma 等を使わない
+5. **`--headed` 禁止**: ヘッドレスで動作
+6. **`pkill` 禁止**: 他セッションを巻き込むため
+
 ## 関連仕様
 
 - プラン: `.claude/plans/curious-launching-minsky.md`

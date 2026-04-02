@@ -6,8 +6,14 @@ Gemini APIを使用して、参照画像と複数の候補画像を比較し、
 同一商品かどうかを判定する。結果はJSONとしてstdoutに出力する。
 
 使用方法:
+    # 単一参照画像
     python tools/gemini/compare_images.py \
-        --ref "images/Target-Product/405912557904.jpg" \
+        --ref "images/Target-Product/405912557904_1.jpg" \
+        --candidates /tmp/mercari_resized_*.png
+
+    # 複数参照画像（ワイルドカード）
+    python tools/gemini/compare_images.py \
+        --ref images/Target-Product/405912557904_*.jpg \
         --candidates /tmp/mercari_resized_*.png
 
 環境変数:
@@ -49,8 +55,9 @@ def parse_args():
     )
     parser.add_argument(
         "--ref",
+        nargs="+",
         required=True,
-        help="参照画像ファイルパス",
+        help="参照画像ファイルパス（複数指定可、ワイルドカード展開はシェル側で実施）",
     )
     parser.add_argument(
         "--candidates",
@@ -92,14 +99,19 @@ def get_mime_type(path: str) -> str:
     return mime_map.get(ext, "image/jpeg")
 
 
-def build_prompt(num_candidates: int) -> str:
+def build_prompt(num_references: int, num_candidates: int) -> str:
+    if num_references == 1:
+        ref_desc = "- 参照画像（1枚目）: 仕入れ対象の商品"
+    else:
+        ref_desc = f"- 参照画像（1〜{num_references}枚目）: 仕入れ対象の商品（複数アングルの同一商品）"
     candidates_desc = "\n".join(
-        f"- 候補画像{i+1}（インデックス{i}）" for i in range(num_candidates)
+        f"- 候補画像{i+1}（インデックス{i}、画像の{num_references + i + 1}枚目）"
+        for i in range(num_candidates)
     )
     return f"""あなたは商品画像の比較専門家です。
 
 以下の画像を比較してください：
-- 参照画像（1枚目）: 仕入れ対象の商品
+{ref_desc}
 {candidates_desc}
 
 以下の観点で判定してください：
@@ -140,7 +152,7 @@ def build_prompt(num_candidates: int) -> str:
 }}"""
 
 
-def compare_images(ref_path: str, candidate_paths: list[str], model: str) -> dict:
+def compare_images(ref_paths: list[str], candidate_paths: list[str], model: str) -> dict:
     """Gemini APIを使って画像比較を実行する"""
     try:
         from google import genai
@@ -165,10 +177,11 @@ def compare_images(ref_path: str, candidate_paths: list[str], model: str) -> dic
     # 画像データを構築
     contents = []
 
-    # 参照画像
-    ref_bytes = load_image_as_bytes(ref_path)
-    ref_mime = get_mime_type(ref_path)
-    contents.append(types.Part.from_bytes(data=ref_bytes, mime_type=ref_mime))
+    # 参照画像（複数対応）
+    for ref_path in ref_paths:
+        ref_bytes = load_image_as_bytes(ref_path)
+        ref_mime = get_mime_type(ref_path)
+        contents.append(types.Part.from_bytes(data=ref_bytes, mime_type=ref_mime))
 
     # 候補画像
     for candidate_path in candidate_paths:
@@ -177,7 +190,7 @@ def compare_images(ref_path: str, candidate_paths: list[str], model: str) -> dic
         contents.append(types.Part.from_bytes(data=cand_bytes, mime_type=cand_mime))
 
     # プロンプト
-    prompt = build_prompt(len(candidate_paths))
+    prompt = build_prompt(len(ref_paths), len(candidate_paths))
     contents.append(types.Part.from_text(text=prompt))
 
     # スキーマファイルの読み込み
@@ -216,10 +229,22 @@ def compare_images(ref_path: str, candidate_paths: list[str], model: str) -> dic
 def main():
     args = parse_args()
 
-    # 参照画像の存在確認
-    if not os.path.exists(args.ref):
+    # 参照画像のワイルドカード展開
+    ref_paths = expand_candidates(args.ref)
+    if not ref_paths:
         result = {
             "error": f"参照画像が見つかりません: {args.ref}",
+            "same_product": False,
+            "confidence": "low",
+        }
+        print(json.dumps(result, ensure_ascii=False))
+        sys.exit(1)
+
+    # 存在しない参照画像を除外
+    ref_paths = [p for p in ref_paths if os.path.exists(p)]
+    if not ref_paths:
+        result = {
+            "error": "参照画像ファイルが存在しません",
             "same_product": False,
             "confidence": "low",
         }
@@ -250,7 +275,7 @@ def main():
         sys.exit(1)
 
     # 画像比較を実行
-    result = compare_images(args.ref, candidate_paths, args.model)
+    result = compare_images(ref_paths, candidate_paths, args.model)
 
     if "error" in result:
         print(json.dumps(result, ensure_ascii=False))
